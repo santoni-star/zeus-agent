@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+.venv/
+venv/
+
+# Environment
+.env
+.env.local
+*.key
+*.pem
+secrets/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project
+logs/
+data/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Tests
+.coverage
+htmlcov/
+.pytest_cache/
+
+# Generated
+tmp/
+temp/

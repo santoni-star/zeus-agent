@@ -1,0 +1,196 @@
+# Zeus Agent — Architecture
+
+## High-Level Design
+
+Zeus is a **layered agent architecture** where each layer has a distinct responsibility and can evolve independently.
+
+```
+┌─────────────────────────────────────────────────────┐
+│                   USER INTERFACE                     │
+│  (CLI / Gateway / API / Webhook / IDE Plugin)       │
+└─────────────────────┬───────────────────────────────┘
+                      │
+┌─────────────────────▼───────────────────────────────┐
+│  L1 — ORCHESTRATOR (Meta-Cognitive Layer)           │
+│  • Receives goal → decomposes into plan             │
+│  • Maintains the task DAG (not linear list)         │
+│  • Decides WHO executes WHAT and WHEN               │
+│  • Self-reflects: "how did that go? improve it."    │
+│  • Spawns and monitors sub-agents                   │
+└─────────────────────┬───────────────────────────────┘
+                      │
+┌─────────────────────▼───────────────────────────────┐
+│  L2 — EXECUTOR (Agent Loop)                         │
+│  • Standard tool-calling loop                       │
+│  • Dynamic tool composition (create tools on fly)   │
+│  • Adaptive context management                      │
+│  • Error recovery with fallback strategies          │
+│  • Multi-step reasoning with checkpoint/rollback    │
+└─────────────────────┬───────────────────────────────┘
+                      │
+┌─────────────────────▼───────────────────────────────┐
+│  L3 — TOOL SYSTEM                                   │
+│  • Static tools (built-in: terminal, file, web)     │
+│  • Dynamic tools (generated per-task)               │
+│  • MCP servers (external capability)                │
+│  • Plugin system (user extensions)                  │
+│  • Sandboxing & security gates                      │
+└─────────────────────┬───────────────────────────────┘
+                      │
+┌─────────────────────▼───────────────────────────────┐
+│  L4 — MEMORY & LEARNING                             │
+│  • Episodic memory (session history, compressed)     │
+│  • Semantic memory (vector DB, fact store)           │
+│  • Procedural memory (skills that self-improve)      │
+│  • Predictive context (what will I need next?)       │
+│  • Cross-session behavioral learning                 │
+└─────────────────────────────────────────────────────┘
+```
+
+## Core Innovation: The Zeus Loop
+
+### Phase 1: Meta-Cognition (Orchestrator)
+
+Instead of jumping straight into execution, Zeus pauses to think:
+
+```
+1. ANALYZE   — What is the user really asking? What's the goal behind the words?
+2. DECOMPOSE — Break the goal into a DAG of sub-tasks (not a linear list)
+3. PLAN      — For each sub-task: which tools? which models? success criteria?
+4. PRIORITIZE— What must happen first? What can run in parallel?
+5. METRIZE   — How will I know I succeeded?
+```
+
+This produces a **Task DAG** — a directed acyclic graph where:
+- Nodes = sub-tasks with clear success criteria
+- Edges = dependencies ("B depends on A")
+- Metadata = assigned tools, expected output format, fallback plan
+
+### Phase 2: Execution (Agent Loop)
+
+Task-by-task traversal of the DAG with:
+- **Dynamic tools** — if a task needs "parse all API docs in this repo", Zeus generates a custom tool on the fly
+- **Adaptive context** — only the relevant sub-DAG is in context; the rest lives in vector storage until needed
+- **Checkpointing** — every N steps saves state; rollback on failure instead of compounding errors
+- **Parallel execution** — sibling tasks in the DAG run concurrently via sub-agents
+
+### Phase 3: Reflection (Meta-Cognition, again)
+
+After the DAG is complete:
+
+```
+1. REVIEW    — Did the final output meet the success criteria?
+2. TRACE     — Where did it go well? Where did it waste time?
+3. LEARN     — Extract a reusable pattern → save as a skill
+4. OPTIMIZE  — Update the planner's model of what works for this user/task type
+5. REPORT    — Tell the user: what was done, how, and what Zeus learned
+```
+
+This is the **self-improvement engine**. Every task makes Zeus better at the next one.
+
+## Key Architectural Decisions
+
+### 1. Task DAG over Linear Lists
+
+Most agents maintain a linear to-do list. Zeus uses a DAG. Why?
+
+| Aspect | Linear List | Task DAG |
+|--------|-------------|----------|
+| Parallelism | Impossible to detect | Explicit sibling edges |
+| Failure handling | Re-plan everything | Re-plan only the failed sub-tree |
+| Context cost | Full plan always in context | Only active sub-tree |
+| Resumption | Start from top | Resume any unfinished node |
+
+### 2. Dynamic Tool Generation
+
+Zeus can create new tools at runtime:
+
+```python
+# Zeus detects: "I need to parse all markdown files in this repo"
+# It generates:
+tool = create_tool(
+    name="parse_markdown_files",
+    description="Recursively find and parse markdown files",
+    parameters={
+        "root_dir": {"type": "string"},
+        "pattern": {"type": "string", "default": "**/*.md"}
+    },
+    implementation="""# auto-generated by Zeus
+import glob
+for f in glob.glob(root_dir + '/' + pattern, recursive=True):
+    yield parse_markdown(f)
+"""
+)
+register_tool(tool)
+```
+
+Tools are cached in procedural memory and re-used when similar patterns appear.
+
+### 3. Adaptive Context Management
+
+Instead of waiting until the context is full and compressing reactively (like every framework today), Zeus:
+
+1. **Predicts** context needs for the next N steps from the task DAG
+2. **Prunes** anything outside the current sub-tree
+3. **Compresses** only what's between DAG nodes (transition state, not active state)
+4. **Streams** large outputs directly to storage, not context
+
+### 4. Recursive Skill Improvement
+
+Skills in Zeus are **mutable and self-improving**:
+
+- After every task, Zeus asks: "Did I use a skill? Was it correct? Was it complete?"
+- If a skill was wrong or incomplete → **patch it immediately**
+- If a task was done without a skill but had a clear pattern → **create a new skill**
+- If a skill was used correctly → **bump its trust score**
+
+This is curator 2.0 — not just cleanup, but active improvement.
+
+### 5. Hybrid Memory Architecture
+
+```
+┌──────────────────────────────────────────────────────┐
+│                 QUERY LAYER                           │
+│  "What do I need right now?"                          │
+├──────────────────────────────────────────────────────┤
+│                                                        │
+│  ┌────────────────┐  ┌──────────────────┐             │
+│  │ Short-term      │  │ Working Memory    │            │
+│  │ (current DAG)   │  │ (last 3 turns)    │            │
+│  └───────┬────────┘  └────────┬─────────┘             │
+│          │                    │                        │
+│  ┌───────▼────────────────────▼─────────┐              │
+│  │       Fusion Layer                    │              │
+│  │  (compresses, dedupes, prioritizes)   │              │
+│  └───────┬───────────────────────────────┘              │
+│          │                                              │
+│  ┌───────▼────────┐  ┌──────────────────┐              │
+│  │ Episodic        │  │ Semantic          │             │
+│  │ (sessions DB)   │  │ (vector store)    │             │
+│  └────────────────┘  └──────────────────┘              │
+│                                                        │
+│  ┌─────────────────────────────────────┐               │
+│  │ Procedural (skills, tools, patterns) │              │
+│  └─────────────────────────────────────┘               │
+└──────────────────────────────────────────────────────┘
+```
+
+## Model Agnosticism
+
+Zeus doesn't care about the model. It adapts:
+
+- **Strong models** (Claude, GPT-4) → full meta-cognition, complex DAGs, deep reflection
+- **Weak models** (local 1B-7B) → simplified planner, shorter DAGs, fewer tools per node
+- **Self-detection** → Zeus benchmarks itself on first run and tunes complexity automatically
+
+## Security Model
+
+- **Tiered approval**: `auto` | `notify` | `confirm` | `block`
+- Dynamic per-tool, per-action permissions
+- Sandboxed execution via Firecracker / Docker / local
+- All generated code is auto-reviewed before execution
+- Secret redaction at every output boundary (not just system prompt)
+
+---
+
+*Архітектура відкрита до змін. Критика вітається.*
