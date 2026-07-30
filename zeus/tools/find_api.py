@@ -286,18 +286,36 @@ def _do_call(apis: list[dict], query: str, api_name: str = "",
 
         def score_api(api):
             s = 0
-            name_desc = f"{api['name']} {api['description']}".lower()
+            name = api['name'].lower()
+            desc = api['description'].lower()
+            cat = api.get('category', '').lower()
+            name_desc = f"{name} {desc}"
+
             for word in q_words:
-                if word in api['name'].lower():
+                if word in name:
                     s += 5
-                elif word in api['description'].lower():
+                if word in desc:
                     s += 3
-                if word in api.get('category', '').lower():
+                if word in cat:
                     s += 2
+
+            # Prefer APIs where the query word(s) are in the title, not just description
+            q_in_name = sum(1 for w in q_words if w in name)
+            s += q_in_name * 2
+
             # Prefer JSON APIs over HTML pages
             url = api.get('url', '').lower()
-            if '.json' in url or '/api/' in url:
+            if '/api/' in url:
+                s += 2
+            if '.json' in url:
                 s += 1
+
+            # Penalize overly specific APIs when query is general
+            specific_indicators = ['aviation', 'airport', 'aircraft', 'flight']
+            for si in specific_indicators:
+                if si in name and si not in q:
+                    s -= 3
+
             return s
 
         results = _search(apis, query, category, no_auth=True, https_only=True)
