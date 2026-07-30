@@ -102,6 +102,11 @@ MODULE_STOPPED = "module.stopped"
 MODULE_ERROR = "module.error"
 SYSTEM_SHUTDOWN = "system.shutdown"
 
+# Reflection
+REFLECTION_TOOL_CREATED = "reflection.tool_created"
+REFLECTION_PATTERN_DETECTED = "reflection.pattern_detected"
+REFLECTION_TASK_FAILED = "reflection.task_failed"
+
 # Proactive
 PROACTIVE_TRIGGER = "proactive.trigger"
 PROACTIVE_TICK = "proactive.tick"

@@ -7,7 +7,8 @@ Available modules:
   - classifier: Intent classification
   - memory: Session store + facts
   - router: Intent routing
-  - pipeline: Plan → Execute → Synthesize
+  - pipeline: Plan -> Execute -> Synthesize
+  - reflection: Task pattern analysis and auto-tool creation
 """
 
 from zeus.module import EventBus, Module, ModuleManager, Event
@@ -15,3 +16,4 @@ from zeus.modules.classifier import ClassifierModule
 from zeus.modules.memory import MemoryModule
 from zeus.modules.router import RouterModule
 from zeus.modules.pipeline import PipelineModule
+from zeus.modules.reflection import ReflectionModule
