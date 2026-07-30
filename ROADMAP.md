@@ -18,8 +18,8 @@
 - [x] Gateway adapter (20+ platforms via Hermes)
 - [x] CLI interface (single query + interactive)
 - [x] Auto-configuration from Hermes config
-- [ ] LLM-powered Planner creates real DAGs (Phase 0.1)
-- [ ] Memory skeleton (SQLite for sessions)
+- [x] LLM-powered Planner creates real DAGs (Phase 0.1)
+- [x] Memory skeleton (SQLite+FTS5 for sessions, facts, extractor)
 - [ ] One real task: "find and install a Hermes skill"
 - [ ] Comparison benchmark vs Hermes Agent on 5 tasks
 
