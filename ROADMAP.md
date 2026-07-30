@@ -5,15 +5,21 @@
 **Goal:** Working proof-of-concept that can solve real tasks.
 
 - [x] Repository created
-- [ ] Core agent loop in Python (~200 lines)
-  - [ ] LLM calling with tool support
-  - [ ] Tool registry and dispatch
-  - [ ] Basic context management
-- [ ] Static tool implementations
-  - [ ] Terminal execution
-  - [ ] File read/write/search
-  - [ ] Web search (DuckDuckGo)
-- [ ] Minimal CLI interface
+- [x] Core agent pipeline in Python
+  - [x] Stream Processor: classifier + router
+  - [x] Planner (LLM → Task DAG)
+  - [x] DAG Executor (pure code, 0 LLM)
+  - [x] Synthesizer (LLM → response)
+- [x] Static tools
+  - [x] Terminal execution
+  - [x] File read/write/search
+  - [x] Web search (DuckDuckGo)
+- [x] Provider system (32 providers via Hermes)
+- [x] Gateway adapter (20+ platforms via Hermes)
+- [x] CLI interface (single query + interactive)
+- [x] Auto-configuration from Hermes config
+- [ ] LLM-powered Planner creates real DAGs (Phase 0.1)
+- [ ] Memory skeleton (SQLite for sessions)
 - [ ] One real task: "find and install a Hermes skill"
 - [ ] Comparison benchmark vs Hermes Agent on 5 tasks
 
