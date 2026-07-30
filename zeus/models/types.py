@@ -55,7 +55,7 @@ class ToolRegistry:
     def execute(self, name: str, params: dict) -> Any:
         if name not in self.tools:
             raise ValueError(f"Unknown tool: '{name}'. Available: {list(self.tools.keys())}")
-        return self.tools[name]["handler"](**params)
+        return self.tools[name]["handler"](params)
 
     def schemas(self) -> list[dict]:
         return [t["schema"] for t in self.tools.values()]

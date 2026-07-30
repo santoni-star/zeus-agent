@@ -17,12 +17,10 @@ from zeus.models.types import ToolRegistry
 from zeus.tools.terminal import execute as terminal_execute, SCHEMA as terminal_schema
 from zeus.tools.file import execute as file_execute, SCHEMA as file_schema
 from zeus.tools.web import execute as web_execute, SCHEMA as web_schema
-from zeus.llm import (
-    make_llm_call,
-    configure_from_env,
-    list_providers,
-)
+from zeus.llm import make_llm_call, configure_from_env, list_providers
 import zeus.llm as _llm_mod  # for constants
+
+from zeus.memory import SessionStore, extract_facts, save_task_result
 
 _llm_call = None
 _tool_registry = None
@@ -37,7 +35,7 @@ def setup_tools() -> ToolRegistry:
     return registry
 
 
-def process(text: str, registry: ToolRegistry) -> str:
+def process(text: str, registry: ToolRegistry, store: SessionStore = None) -> str:
     """Process a user request through the full Zeus pipeline."""
     global _llm_call
 
@@ -50,6 +48,14 @@ def process(text: str, registry: ToolRegistry) -> str:
         tool_registry=registry,
         llm_call=_llm_call,
     )
+
+    # 3. Save to memory
+    if store:
+        store.add_message("user", text)
+        store.add_message("assistant", result.output)
+        extract_facts(store, text, result.output)
+        if result.dag_result:
+            save_task_result(store, text, result.dag_result)
 
     # Format output
     output = []
@@ -77,6 +83,32 @@ def show_providers():
     else:
         print("\n⚠ No providers found. Install hermes-agent or configure manually.")
     print()
+
+
+def _show_memory(store):
+    """Display saved facts."""
+    facts = store.get_facts(limit=10)
+    if not facts:
+        print("  No facts stored yet.")
+        return
+    print(f"  Facts ({len(facts)}):")
+    for f in facts:
+        cat = f["category"]
+        content = f["content"][:80]
+        trust = f["trust"]
+        print(f"  • [{cat}] {content} (trust: {trust})")
+
+
+def _show_sessions(store):
+    """Display recent sessions."""
+    sessions = store.list_sessions(limit=5)
+    if not sessions:
+        print("  No sessions yet.")
+        return
+    for s in sessions:
+        import datetime
+        ts = datetime.datetime.fromtimestamp(s["created_at"]).strftime("%Y-%m-%d %H:%M")
+        print(f"  #{s['id']} {s['title'] or '(no title)'} — {ts}")
 
 
 def main():
@@ -124,6 +156,9 @@ Examples:
     # Initialize tool registry
     _tool_registry = setup_tools()
 
+    # Initialize memory
+    _store = SessionStore()
+
     # Initialize LLM — auto-configure from Hermes if possible
     if args.provider or args.model or args.api_key:
         _llm_call = make_llm_call(
@@ -144,7 +179,7 @@ Examples:
         _llm_call = configure_from_env()
 
     if args.query:
-        result = process(args.query, _tool_registry)
+        result = process(args.query, _tool_registry, _store)
         print(result)
 
     elif args.interactive:
@@ -168,8 +203,14 @@ Examples:
                 if text == "/providers":
                     show_providers()
                     continue
+                if text == "/memory":
+                    _show_memory(_store)
+                    continue
+                if text == "/sessions":
+                    _show_sessions(_store)
+                    continue
 
-                result = process(text, _tool_registry)
+                result = process(text, _tool_registry, _store)
                 print()
                 print(result)
                 print()

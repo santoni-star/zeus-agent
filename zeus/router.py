@@ -9,47 +9,53 @@ from zeus.runtime import execute_dag
 from zeus.synthesizer import synthesize
 
 
+# Commands that should be executed directly (not via DAG)
+_KNOWN_COMMANDS = {
+    "cd", "ls", "cat", "rm", "mv", "cp", "mkdir", "touch",
+    "pwd", "echo", "grep", "find", "git", "docker", "npm",
+    "pip", "cargo", "chmod", "curl", "wget", "ps", "top",
+    "kill", "python", "node", "go", "rustc", "make", "cmake",
+    "which", "whereis", "head", "tail", "sort", "uniq", "wc",
+    "tar", "gzip", "gunzip", "zip", "unzip", "ssh", "scp",
+    "df", "du", "free", "uname", "env", "export", "alias",
+    "ping", "nslookup", "dig", "traceroute", "netstat",
+}
+
+
 def route(
     classification: ClassificationResult,
     tool_registry=None,
     llm_call=None,
 ) -> ExecutionResult:
-    """Route a classified input to the appropriate handler.
-
-    Args:
-        classification: Result from classifier.
-        tool_registry: Available tools (for task execution).
-        llm_call: Function to call LLM. Signature: llm_call(messages, tools) -> str
-
-    Returns:
-        ExecutionResult with final output.
-    """
+    """Route a classified input to the appropriate handler."""
     intent = classification.intent
     text = intent.raw_input
+    first_word = text.strip().split()[0] if text.strip() else ""
 
-    if intent.type == "command":
+    # Command: only if first word is a known binary
+    if intent.type == "command" and first_word in _KNOWN_COMMANDS:
         return _handle_command(text)
 
-    elif intent.type == "simple_chat":
+    # else fall through to handler chain
+    if intent.type == "simple_chat":
         return _handle_chat(text)
 
-    elif intent.type == "simple_question":
+    elif intent.type == "simple_question" and llm_call:
         return _handle_question(text, llm_call)
+
+    elif intent.type == "task_complex" or intent.type == "task_simple":
+        return _handle_complex_task(text, tool_registry, llm_call)
 
     elif intent.type == "skill_search":
         return _handle_skill_search(text)
-
-    elif intent.type == "task_simple":
-        return _handle_simple_task(text, tool_registry)
-
-    elif intent.type == "task_complex":
-        return _handle_complex_task(text, tool_registry, llm_call)
 
     elif intent.type == "system":
         return _handle_system(text)
 
     else:
-        # Fallback: treat as question
+        # Fallback: if LLM available, treat as task
+        if llm_call:
+            return _handle_complex_task(text, tool_registry, llm_call)
         return _handle_question(text, llm_call)
 
 
@@ -57,7 +63,6 @@ def _handle_command(text: str) -> ExecutionResult:
     """Execute a direct terminal command."""
     from zeus.tools.terminal import execute
 
-    # Strip leading 'cd ' etc. if it's just the command
     result = execute({"command": text})
     return ExecutionResult(
         success=True,
@@ -96,7 +101,7 @@ def _handle_question(text: str, llm_call) -> ExecutionResult:
             {"role": "system", "content": "Ти — Zeus Agent. Відповідай коротко і точно."},
             {"role": "user", "content": text},
         ],
-        tools=None,  # no tools needed for simple questions
+        tools=None,
     )
     return ExecutionResult(success=True, output=response)
 
@@ -111,7 +116,6 @@ def _handle_skill_search(text: str) -> ExecutionResult:
 
 def _handle_simple_task(text: str, tool_registry) -> ExecutionResult:
     """Handle a single-step task with one tool call."""
-    # For Phase 0, escalate to complex task handler
     return _handle_complex_task(text, tool_registry, None)
 
 
@@ -146,7 +150,7 @@ def _handle_complex_task(text: str, tool_registry, llm_call) -> ExecutionResult:
         )
 
     # 3. Execute DAG
-    results = execute_dag(dag, tool_registry)
+    results = execute_dag(dag, tool_registry, llm_call=llm_call)
 
     # 4. Synthesize final response
     final = synthesize(

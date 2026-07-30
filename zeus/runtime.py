@@ -11,15 +11,15 @@ from collections import deque
 from zeus.models import TaskDAG, DAGNode, NodeResult
 
 
-def execute_dag(dag: TaskDAG, tool_registry) -> list[NodeResult]:
+def execute_dag(dag: TaskDAG, tool_registry, llm_call=None) -> list[NodeResult]:
     """Execute a Task DAG.
 
-    Traverses the graph topologically, executing independent nodes in parallel
-    (within the limits of synchronous tool calls).
+    Traverses the graph topologically, executing independent nodes in parallel.
 
     Args:
         dag: The Task DAG to execute.
         tool_registry: Registry of available tools.
+        llm_call: Optional LLM call function for 'llm' type nodes.
 
     Returns:
         List of NodeResult for each node in the DAG.
@@ -52,7 +52,7 @@ def execute_dag(dag: TaskDAG, tool_registry) -> list[NodeResult]:
             continue
 
         # Execute this node
-        result = _execute_node(node, tool_registry, results)
+        result = _execute_node(node, tool_registry, results, llm_call)
         results[node.id] = result
         completed.add(node.id)
 
@@ -85,22 +85,18 @@ def _find_ready_nodes(nodes: list[DAGNode], completed: set) -> list[DAGNode]:
     return ready
 
 
-def _execute_node(node: DAGNode, tool_registry, results: dict) -> NodeResult:
+def _execute_node(node: DAGNode, tool_registry, results: dict, llm_call=None) -> NodeResult:
     """Execute a single DAG node."""
     start = time.time()
 
     if node.type == "tool":
-        result = _execute_tool_node(node, tool_registry)
+        result = _execute_tool_node(node, tool_registry, results)
     elif node.type == "wait":
         result = _execute_wait_node(node, results)
     elif node.type == "merge":
         result = _execute_merge_node(node, results)
     elif node.type == "llm":
-        result = NodeResult(
-            node_id=node.id,
-            success=False,
-            error="LLM nodes not yet supported in Phase 0",
-        )
+        result = _execute_llm_node(node, results, llm_call)
     else:
         result = NodeResult(
             node_id=node.id,
@@ -112,13 +108,39 @@ def _execute_node(node: DAGNode, tool_registry, results: dict) -> NodeResult:
     return result
 
 
-def _execute_tool_node(node: DAGNode, tool_registry) -> NodeResult:
-    """Execute a tool node with retry logic."""
+def _execute_tool_node(node: DAGNode, tool_registry, results: dict | None = None) -> NodeResult:
+    """Execute a tool node with retry logic and template substitution."""
+    # Substitute templates in params (e.g. {{search.output}} → actual value)
+    params = node.params.copy()
+    if results:
+        import re
+        def _substitute(match):
+            ref = match.group(1).strip()
+            if "." in ref:
+                node_id, field = ref.split(".", 1)
+            else:
+                node_id, field = ref, "output"
+            if node_id in results and results[node_id].success:
+                val = getattr(results[node_id], field, None)
+                if val is not None:
+                    return str(val)
+            return match.group(0)
+
+        # Apply substitution to all string values in params
+        for key, val in params.items():
+            if isinstance(val, str):
+                params[key] = re.sub(r"\{([a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*)?)\}", _substitute, val)
+            elif isinstance(val, dict):
+                # Recursive for nested dicts
+                for k2, v2 in val.items():
+                    if isinstance(v2, str):
+                        val[k2] = re.sub(r"\{\{(.+?)\}\}", _substitute, v2)
+
     last_error = None
 
     for attempt in range(node.retry):
         try:
-            output = tool_registry.execute(node.tool, node.params)
+            output = tool_registry.execute(node.tool, params)
             return NodeResult(
                 node_id=node.id,
                 success=True,
@@ -176,3 +198,51 @@ def _execute_merge_node(node: DAGNode, results: dict) -> NodeResult:
             if val is not None:
                 combined.append(str(val))
         return NodeResult(node_id=node.id, success=True, output="\n".join(combined))
+
+
+def _execute_llm_node(node: DAGNode, results: dict, llm_call) -> NodeResult:
+    """Execute an LLM node: call the LLM with a prompt that includes dependency results."""
+    if llm_call is None:
+        return NodeResult(
+            node_id=node.id, success=False,
+            error="LLM node requires llm_call function"
+        )
+
+    # Build context from dependency results
+    context = ""
+    for dep in node.depends_on:
+        if dep in results:
+            r = results[dep]
+            if r.success and r.output:
+                context += f"--- {dep} ---\n{r.output}\n\n"
+
+    # Resolve templates in prompt
+    import re
+    prompt = node.llm_prompt or node.params.get("input") or node.params.get("prompt") or "Process the above information."
+
+    def _substitute(match):
+        ref = match.group(1).strip()
+        if "." in ref:
+            node_id, field = ref.split(".", 1)
+        else:
+            node_id, field = ref, "output"
+        if node_id in results and results[node_id].success:
+            val = getattr(results[node_id], field, None)
+            if val is not None:
+                return str(val)
+        return match.group(0)
+
+    prompt = re.sub(r"\{([a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*)?)\}", _substitute, prompt)
+    full_prompt = f"{context}{prompt}" if context else prompt
+
+    try:
+        response = llm_call(
+            messages=[
+                {"role": "system", "content": "Ти — корисний асистент. Виконуй завдання на основі наданої інформації."},
+                {"role": "user", "content": full_prompt},
+            ],
+            tools=None,
+        )
+        return NodeResult(node_id=node.id, success=True, output=response.strip())
+    except Exception as e:
+        return NodeResult(node_id=node.id, success=False, error=str(e))
