@@ -22,6 +22,12 @@ import zeus.llm as _llm_mod  # for constants
 
 from zeus.memory import SessionStore, extract_facts, save_task_result
 from zeus.proactive import Scheduler
+from zeus.tools.dynamic import (
+    discover_custom_tools,
+    create_tool as create_dynamic_tool,
+    list_custom_tools,
+    delete_tool as delete_custom_tool,
+)
 import re
 
 _llm_call = None
@@ -29,11 +35,20 @@ _tool_registry = None
 
 
 def setup_tools() -> ToolRegistry:
-    """Initialize the tool registry with all available tools."""
+    """Initialize the tool registry with all available tools.
+
+    Loads built-in tools + any custom tools from ~/.zeus/custom_tools/.
+    """
     registry = ToolRegistry()
     registry.register("terminal", terminal_schema, terminal_execute)
     registry.register("file", file_schema, file_execute)
     registry.register("web_search", web_schema, web_execute)
+
+    # Discover and register custom tools
+    custom = discover_custom_tools()
+    for name, tool in custom.items():
+        registry.register(name, tool["schema"], tool["handler"])
+
     return registry
 
 
@@ -167,6 +182,75 @@ def _handle_schedule_cmd(text: str, scheduler):
     print("    e.g.: /schedule cancel job_123")
 
 
+def _handle_tools_cmd(text: str):
+    """Handle /tools commands."""
+    global _llm_call, _tool_registry
+    cmd = text[len("/tools"):].strip()
+
+    # /tools list
+    if not cmd or cmd == "list":
+        names = _tool_registry.names() if _tool_registry else []
+        print(f"  Tools ({len(names)}):")
+        for n in names:
+            is_custom = n not in ("terminal", "file", "web_search")
+            mark = "⚡" if is_custom else "•"
+            print(f"  {mark} {n}")
+        return
+
+    # /tools create <description>
+    if cmd.startswith("create "):
+        global _llm_call
+        if not _llm_call:
+            print("  ⚠ LLM not configured. Cannot create tools.")
+            return
+
+        desc = cmd[7:].strip()
+        print(f"  Generating tool: \"{desc}\"...")
+        result = create_dynamic_tool(desc, _llm_call)
+        if result["success"]:
+            name = result["name"]
+            schema = result["schema"]
+            desc_text = schema.get("description", "")
+            params = list(schema.get("parameters", {}).get("properties", {}).keys())
+            print(f"  ✅ Created tool: {name}")
+            print(f"     Description: {desc_text}")
+            print(f"     Parameters: {', '.join(params)}")
+            print(f"     Saved: {result['path']}")
+
+            # Reload: re-setup tools
+            _tool_registry = setup_tools()
+        else:
+            print(f"  ⚠ Failed: {result.get('error', 'unknown error')}")
+        return
+
+    # /tools delete <name>
+    if cmd.startswith("delete "):
+        name = cmd[7:].strip()
+        if delete_custom_tool(name):
+            _tool_registry = setup_tools()
+            print(f"  ✅ Deleted tool: {name}")
+        else:
+            print(f"  ⚠ Tool not found: {name}")
+        return
+
+    # /tools inspect <name>
+    if cmd.startswith("inspect "):
+        name = cmd[8:].strip()
+        if _tool_registry:
+            for n in _tool_registry.names():
+                if n == name:
+                    print(f"  Tool: {n}")
+                    return
+        print(f"  ⚠ Tool not found: {name}")
+        return
+
+    print("  Usage: /tools                    — list tools")
+    print("         /tools list               — list tools")
+    print("         /tools create <desc>      — create a tool from description")
+    print("         /tools delete <name>      — delete a custom tool")
+    print("         /tools inspect <name>     — show tool details")
+
+
 def main():
     global _llm_call, _tool_registry
 
@@ -277,6 +361,11 @@ Examples:
                 # Schedule commands
                 if text.startswith("/schedule "):
                     _handle_schedule_cmd(text, _scheduler)
+                    continue
+
+                # Tool management
+                if text.startswith("/tools"):
+                    _handle_tools_cmd(text)
                     continue
 
                 result = process(text, _tool_registry, _store)

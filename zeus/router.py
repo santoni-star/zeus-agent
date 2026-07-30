@@ -41,6 +41,9 @@ def route(
         return _handle_chat(text)
 
     elif intent.type == "simple_question" and llm_call:
+        # If there are custom tools available, try Planner first
+        if tool_registry and len(tool_registry.names()) > 3:
+            return _handle_complex_task(text, tool_registry, llm_call)
         return _handle_question(text, llm_call)
 
     elif intent.type == "task_complex" or intent.type == "task_simple":

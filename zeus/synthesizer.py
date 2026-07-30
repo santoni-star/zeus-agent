@@ -39,7 +39,13 @@ def synthesize(goal: str, results: list[NodeResult], llm_call) -> str:
     for r in results:
         status = "✅" if r.success else "❌"
         steps.append(f"{status} {r.node_id} ({r.duration_ms:.0f}ms)")
-        if not r.success and r.error:
+        if r.success and r.output:
+            # Include actual tool output (truncated for very long outputs)
+            output_str = str(r.output).strip()
+            if len(output_str) > 500:
+                output_str = output_str[:500] + "..."
+            steps.append(f"   Output: {output_str}")
+        elif not r.success and r.error:
             steps.append(f"   Error: {r.error}")
 
     summary = f"""Goal: {goal}
