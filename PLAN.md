@@ -124,6 +124,8 @@ Phase 6 progress: [##########] 100%
   P6.4 Delegate:   [##########] 100% — DelegateManager + subprocess child agents + parallel
   P6.5 Resilience: [##########] 100% — ResilientLLM + retry + fallback chain + health tracking
   P6.6 Performance: [######### ] 90% — ResponseCache + CachedLLM + LRU + TTL
+  Sync:            [##########] 100% — GitSync auto-backup + restore via GitHub
+  Docs:            [##########] 100% — TOOLS.md + COMMANDS.md + ARCHITECTURE.md
 ```
 
 Загальна мета Phase 6 — функціональний паритет з Hermes Agent.
