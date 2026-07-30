@@ -35,10 +35,11 @@
 
 ## P2. Dynamic Tools & Memory
 
-### P2.1 ✦ Динамічні тулзи з депенденсами
-- [ ] Тулза може мати `pip install pandas` etc
-- [ ] Auto-install залежностей при створенні/завантаженні
-- [ ] Тулзи з файлами (бінарні, моделі тощо)
+### P2.1 ✦ Динамічні тулзи з депенденсами (DONE)
+- [x] Тулза може мати REQUIREMENTS: у docstring
+- [x] Auto-install pip залежностей при створенні
+- [x] Auto-install при завантаженні (discover_custom_tools)
+- [x] /tools install-deps (через auto-install)
 
 ### P2.2 ✦ Cross-session memory
 - [ ] Після кожної сесії — автоматичне збереження ключових фактів
