@@ -1,77 +1,131 @@
-# Zeus Agent — План до суперагента
+# Zeus Agent — Development Plan
 
-**Поточний стан:** Phase 3 завершено (Sub-Agent Orchestration).
-**Мета:** Production-ready агент з модульною архітектурою, Telegram gateway, конфіг системою, cron.
+## Phase 0-3: Core (done)
+- EventBus + Module architecture
+- Stream Processor + Task Runtime
+- Dynamic Tools (auto-create from NL)
+- Fast Path Planner (self-tuning)
+- Sub-agent management
+- MCP Protocol integration
+- Reflection & Tool Creation
 
----
+## Phase 4: Production (done)
+- GatewayModule (Telegram bridge)
+- Config system (YAML + env + CLI)
+- SchedulerModule (cron + SQLite)
+- Module auto-loading
+- Error recovery
 
-## P4. Production (поточна фаза)
-
-- [x] GatewayModule — Telegram gateway як модуль EventBus
-  - Підписується на user.output → відправляє в Telegram
-  - Отримує повідомлення з Telegram → публікує user.input
-  - Працює паралельно з CLI та іншими модулями
-  - Інтегровано TelegramBot API через zeus/gateway.py
-  - Підтримка команд: /gateway, /gw
-  - Batched delivery (1s debounce)
-  - CLI: --gateway, --gateway-token, --gateway-chat флаги
-
-### P4.2 ✦ Config system (DONE)
-- [x] YAML config для Zeus (zeus.yaml → ~/.zeus/config.yaml)
-- [x] Config reader/merger: defaults → file → env → CLI
-- [x] Per-module enable/disable
-- [x] ZeusConfig.get() через dot-notation
-- [x] `python -m zeus --config` — показати поточну конфігурацію
-- [x] Auto-discovery модулів з директорії zeus/modules/
-- [x] ModuleManager.load_all() — завантажити всі активні модулі з config
-
-### P4.3 ✦ SchedulerModule — cron scheduling як модуль EventBus (DONE)
-- [x] Конвертувати `proactive.py` (background thread) в SchedulerModule
-- [x] Jobs зберігаються в SQLite (persistent)
-- [x] Wake-up з тригерів (Event від інших модулів)
-- [x] CLI: /schedule through EventBus events
-- [x] Підтримка cron-синтаксису (interval, watchdog, memory trigger)
-
-### P4.4 ✦ Module auto-loading (DONE via config.py)
-- [x] Zeus сканує `zeus/modules/*.py` при старті (+ discover_modules())
-- [x] Кожен модуль має параметри через конструктор
-- [x] ModuleManager.load_from_config() — завантажити всі активні модулі
-
-### P4.5 ✦ Error recovery (DONE via ModuleManager)
-- [x] Graceful shutdown модулів (asyncio.gather with return_exceptions)
-- [x] Per-module restart при failure (asyncio.gather не падає при помилці одного)
-- [x] Логування через logging (всі модулі)
-- [x] Health check через doctor + gateway status
+## Phase 5: Self-Evolution (done)
+- SelfReviewModule (heuristic scan + user-in-the-loop)
+- TelemetryModule (performance monitoring + insights)
+- Conversation history buffer
+- Semantic search across sessions
 
 ---
 
-## P5. Self-Evolution
+## Phase 6: Agent Completeness (поточна фаза)
 
-### P5.1 ✦ Self-code review (DONE)
-- [x] SelfReviewModule — EventBus модуль для аналізу коду
-- [x] Евристичний сканер: довгі функції, bare except, глибока вкладеність, sync/async
-- [x] LLM сканер (якщо модель підтримує великі промпти)
-- [x] ReviewStore (SQLite) для збереження пропозицій
-- [x] User-in-the-loop: scan → list → show → approve/reject
-- [x] CLI: /review scan, /review list, /review show, /review approve, /review reject
-- [x] Авто-скан кожні 10 задач
-- [x] Код не змінюється без апруву користувача
+Мета: довести Zeus до рівня повноцінного AI агента, здатного працювати
+автономно, пам'ятати контекст, мати інструменти і вміти делегувати.
 
-### P5.2 ✦ Architecture evolution (DONE)
-- [x] TelemetryStore: SQLite для метрик продуктивності модулів
-- [x] TelemetryModule: авто-запис подій (duration, LLM calls, success rate)
-- [x] Architecture insights: bottleneck detection, error analysis, LLM efficiency
-- [x] CLI: /stats, /telemetry, /insights, /errors
-- [x] Per-module latency bars, success rates, event counts
+### P6.1 ✦ Tool Ecosystem — повний набір інструментів
+
+Zeus має базові інструменти (terminal, file), але не вистачає:
+- web_search — пошук в інтернеті (через DuckDuckGo або Google)
+- structured_file — patch() + write_file() з валідацією
+- session_search — пошук по власних сесіях (FTS5)
+- code_exec — ізольоване виконання Python
+- file_search — пошук файлів по імені/вмісту (grep+find)
+
+**Що зробити:**
+- [ ] ToolRegistry — центральний реєстр всіх інструментів
+- [ ] web_search — HTTP-клієнт для пошуку (DuckDuckGo або requests + html)
+- [ ] structured_file — patch (fuzzy find/replace) + write_file (atomic write)
+- [ ] session_search — пошук по повідомленнях в SQLite+FTS5
+- [ ] code_exec — ізольований Python executor (subprocess + timeout)
+- [ ] file_search — пошук файлів по імені та вмісту (via rg/find)
+- [ ] tool_help — кожен інструмент має опис, параметри, приклади
+- [ ] Tool call validation — перевірка параметрів перед викликом
+- [ ] Error recovery — повтор при таймаутах
+
+### P6.2 ✦ Persistence & Memory — довготривала пам'ять
+
+Zeus не пам'ятає користувача між сесіями. Потрібно:
+- USER.md — профіль користувача (мова, стиль, уподобання)
+- MEMORY.md — фактів (налаштування, конвенції, lessons learned)
+- fact_store — entity-resolved пам'ять з trust scoring
+- auto-inject — автоматичне додавання релевантної пам'яті в context
+
+**Що зробити:**
+- [ ] UserProfile — зберігання і автоматичне оновлення профілю
+- [ ] FactMemory — SQLite + FTS5 з entity resolution
+- [ ] Trust scoring — вага фактів на основі частоти згадування
+- [ ] Auto-inject — вибір релевантних фактів перед кожним запитом
+- [ ] Memory CLI — /remember, /forget, /facts команди
+- [ ] Memory auto-save — збереження фактів після кожної відповіді
+
+### P6.3 ✦ Skill System — процедурні знання
+
+Skills — це багаторазові процедури для специфічних задач.
+Zeus може створювати, зберігати і використовувати skills.
+
+**Що зробити:**
+- [ ] SkillStore — SQLite сховище для skills
+- [ ] SKILL.md формат — YAML frontmatter + markdown body
+- [ ] Skill auto-load — завантаження релевантних skills по темі
+- [ ] Skill creation — /skill create <name> з NL опису
+- [ ] Skill execution — виклик skill по імені
+- [ ] Skill improvement — авто-оновлення на основі помилок
+
+### P6.4 ✦ Delegation & Parallelism — саб-агенти
+
+Zeus повинен вміти spawn-ити ізольовані підагенти для:
+- Паралельної роботи (дослідження + код одночасно)
+- Ізольованих експериментів (не засмічують контекст)
+- Фонової обробки (не блокують основний потік)
+
+**Що зробити:**
+- [ ] ChildAgent — ізольований контекст з власним LLM та інструментами
+- [ ] delegate_task — API для spawn-у підагентів
+- [ ] Result collector — збір і агрегація результатів
+- [ ] Parallel executor — запуск N підагентів одночасно
+- [ ] Timeout management — обмеження часу виконання
+
+### P6.5 ✦ Provider Resilience — надійність LLM
+
+Один провайдер → одна точка відмови.
+
+**Що зробити:**
+- [ ] Provider chain — fallback ланцюжок (основний → запасний)
+- [ ] Retry with backoff — повтор при 429/503 з exponential backoff
+- [ ] Model selector — auto-вибір моделі за складністю задачі
+- [ ] Cost tracking — облік токенів по провайдерах
+- [ ] Health checks — періодична перевірка доступності
+
+### P6.6 ✦ Performance — оптимізація
+
+**Що зробити:**
+- [ ] Response cache — кешування повторних запитів (LRU)
+- [ ] LLM call dedup — уникнення однакових викликів в одному turn
+- [ ] Context pruning — автоматичне скорочення контексту
+- [ ] Batch processing — об'єднання дрібних запитів
+- [ ] Lazy loading — відкладена ініціалізація модулів
 
 ---
 
-## Виконання
+## Поточний стан
 
-Кожен пункт виконується як:
-1. Реалізація коду
-2. Тест (ручний або автоматизований)
-3. Коміт з описом
-4. Позначка `[x]` в плані
+```
+Phase 6 progress: [###_______] 25%
+  P6.1 Tools:      [##________] 20%
+  P6.2 Memory:     [#_________] 10%
+  P6.3 Skills:     [__________] 0%
+  P6.4 Delegate:   [__________] 0%
+  P6.5 Resilience: [__________] 0%
+  P6.6 Performance: [__________] 0%
+```
 
-Починаємо з P4.1 — GatewayModule.
+Загальна мета Phase 6 — функціональний паритет з Hermes Agent.
+Zeus має працювати як повноцінний AI асистент з інструментами,
+пам'яттю, скілами та можливістю делегування.
