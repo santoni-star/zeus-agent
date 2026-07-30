@@ -117,9 +117,9 @@ Zeus повинен вміти spawn-ити ізольовані підаген�
 ## Поточний стан
 
 ```
-Phase 6 progress: [###_______] 25%
-  P6.1 Tools:      [##________] 20%
-  P6.2 Memory:     [#_________] 10%
+Phase 6 progress: [#######___] 35%
+  P6.1 Tools:      [######### ] 90% — ToolRegistry + structured_file + code_exec + session_search
+  P6.2 Memory:     [########  ] 80% — UserProfile + FactStore + CLI (/remember, /facts)
   P6.3 Skills:     [__________] 0%
   P6.4 Delegate:   [__________] 0%
   P6.5 Resilience: [__________] 0%
