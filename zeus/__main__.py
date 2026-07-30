@@ -35,6 +35,7 @@ from zeus.modules.memory import MemoryModule
 from zeus.modules.router import RouterModule
 from zeus.modules.pipeline import PipelineModule
 from zeus.modules.reflection import ReflectionModule
+from zeus.modules.gateway import GatewayModule
 
 _llm_call = None
 _tool_registry = None
@@ -271,6 +272,9 @@ def main():
     parser.add_argument("--base-url", default=None, help="Base URL override")
     parser.add_argument("--providers", action="store_true", help="List available LLM providers and exit")
     parser.add_argument("--doctor", action="store_true", help="Check Zeus configuration")
+    parser.add_argument("--gateway", action="store_true", help="Enable Telegram gateway module")
+    parser.add_argument("--gateway-token", default=None, help="Telegram bot token")
+    parser.add_argument("--gateway-chat", default=None, help="Telegram chat ID")
 
     args = parser.parse_args()
 
@@ -334,6 +338,17 @@ def main():
         manager.register(RouterModule(bus=bus, tool_registry=_tool_registry, llm_call=_llm_call))
         manager.register(PipelineModule(bus=bus, tool_registry=_tool_registry, llm_call=_llm_call))
         manager.register(ReflectionModule(bus=bus, tool_registry=_tool_registry, llm_call=_llm_call))
+
+        # Optional GatewayModule for Telegram
+        _gateway_mod = None
+        if args.gateway:
+            _gateway_mod = GatewayModule(
+                bus=bus,
+                token=args.gateway_token,
+                chat_id=args.gateway_chat,
+            )
+            manager.register(_gateway_mod)
+
         loop.run_until_complete(manager.start_all())
 
         print("\u2554\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2557")
@@ -368,8 +383,20 @@ def main():
                 if text.startswith("/schedule "):
                     _handle_schedule_cmd(text, _scheduler)
                     continue
+                if text == "/tools list":
+                    _handle_tools_cmd(text)
+                    continue
                 if text.startswith("/tools"):
                     _handle_tools_cmd(text)
+                    continue
+                if text == "/gateway" or text == "/gw":
+                    if _gateway_mod:
+                        if _gateway_mod.is_connected:
+                            print(f"✅ Gateway active (chat: {_gateway_mod.configured_chat})")
+                        else:
+                            print("⚠ Gateway: no token configured. Set TELEGRAM_BOT_TOKEN env var.")
+                    else:
+                        print("⚠ Gateway module not loaded. Restart with --gateway flag.")
                     continue
 
                 # Process via modular EventBus
@@ -431,9 +458,17 @@ def show_doctor():
 
     try:
         import providers
-        print(f"\U0001f50c Provider system: ✅ available")
+        print(f"🔌 Provider system: ✅ available")
     except ImportError:
-        print(f"\U0001f50c Provider system: ❌ not available (install hermes-agent)")
+        print(f"🔌 Provider system: ❌ not available (install hermes-agent)")
+
+    # Telegram gateway status
+    tg_token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    tg_chat = os.environ.get("TELEGRAM_CHAT_ID", "")
+    if tg_token:
+        print(f"📱 Telegram: ✅ token found, chat_id={tg_chat or 'not set'}")
+    else:
+        print(f"📱 Telegram: ⚠ token not set (TELEGRAM_BOT_TOKEN)")
 
     print()
 
