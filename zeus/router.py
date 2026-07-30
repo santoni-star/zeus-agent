@@ -5,9 +5,10 @@ import logging
 import sys
 
 from zeus.models.types import ClassificationResult, ExecutionResult
-from zeus.planner import plan
+from zeus.planner import plan as llm_plan
 from zeus.runtime import execute_dag
 from zeus.synthesizer import synthesize
+from zeus.template_planner import get_template_planner
 
 logger = logging.getLogger(__name__)
 
@@ -137,9 +138,15 @@ def _handle_complex_task(text: str, tool_registry, llm_call) -> ExecutionResult:
 
     start = time.time()
 
-    # 1. Planner: generate Task DAG (filter tools by query relevance)
+    # 1. Planner: try templates first, fall back to LLM
     tools_schemas = tool_registry.schemas(filter_query=text) if tool_registry else []
-    dag = plan(text=text, tools=tools_schemas, llm_call=llm_call)
+    planner = get_template_planner()
+    dag = planner.plan(
+        text=text,
+        tools=tools_schemas,
+        llm_call=llm_call,
+        tool_registry=tool_registry,
+    )
 
     if not dag:
         return ExecutionResult(

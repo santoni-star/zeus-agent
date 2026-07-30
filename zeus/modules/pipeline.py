@@ -12,9 +12,10 @@ import logging
 import time
 
 from zeus.module import Module, Event, USER_INPUT, USER_OUTPUT
-from zeus.planner import plan
+from zeus.planner import plan as llm_plan
 from zeus.runtime import execute_dag
 from zeus.synthesizer import synthesize
+from zeus.template_planner import get_template_planner
 
 logger = logging.getLogger(__name__)
 
@@ -64,9 +65,15 @@ class PipelineModule(Module):
         # Check if context result was emitted (relayed via out-of-band)
         # For now, we just proceed without it - memory context is optional
 
-        # 2. Plan with context (filter tools by query relevance)
+        # 2. Plan with context — templates first, then LLM
         tools_schemas = self._tool_registry.schemas(filter_query=text) if self._tool_registry else []
-        dag = plan(text=text, tools=tools_schemas, llm_call=self._llm_call)
+        planner = get_template_planner()
+        dag = planner.plan(
+            text=text,
+            tools=tools_schemas,
+            llm_call=self._llm_call,
+            tool_registry=self._tool_registry,
+        )
 
         if not dag:
             await self.emit("user.output", {"text": "Не вдалося створити план.", "source": "error", "event_id": event.id})
