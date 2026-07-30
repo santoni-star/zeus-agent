@@ -12,9 +12,10 @@ from zeus.models import TaskDAG, DAGNode, NodeResult
 
 
 def execute_dag(dag: TaskDAG, tool_registry, llm_call=None) -> list[NodeResult]:
-    """Execute a Task DAG.
+    """Execute a Task DAG with per-sub-tree failure handling.
 
     Traverses the graph topologically, executing independent nodes in parallel.
+    If a node fails, its dependents are cancelled but other branches continue.
 
     Args:
         dag: The Task DAG to execute.
@@ -26,14 +27,15 @@ def execute_dag(dag: TaskDAG, tool_registry, llm_call=None) -> list[NodeResult]:
     """
     results: dict[str, NodeResult] = {}
     completed = set()
+    failed = set()
+    cancelled = set()
     node_map = {n.id: n for n in dag.nodes}
 
     # Find root nodes (no dependencies)
     roots = [n for n in dag.nodes if not n.depends_on]
 
     if not roots and dag.nodes:
-        # All nodes have dependencies — find the ones whose deps are resolved
-        roots = _find_ready_nodes(dag.nodes, completed)
+        roots = _find_ready_nodes(dag.nodes, completed, failed)
 
     # BFS traversal
     queue = deque(roots)
@@ -45,6 +47,19 @@ def execute_dag(dag: TaskDAG, tool_registry, llm_call=None) -> list[NodeResult]:
             continue
         visited.add(node.id)
 
+        # Check if any dependency failed — cancel this node
+        failed_deps = [dep for dep in node.depends_on if dep in failed]
+        if failed_deps:
+            results[node.id] = NodeResult(
+                node_id=node.id,
+                success=False,
+                error=f"Cancelled: dependency {failed_deps[0]} failed",
+            )
+            cancelled.add(node.id)
+            # Propagate cancellation to dependents
+            _propagate_cancellation(node.id, dag.nodes, results, cancelled)
+            continue
+
         # Check if dependencies are met
         if not all(dep in completed for dep in node.depends_on):
             # Not ready yet — put back
@@ -54,31 +69,63 @@ def execute_dag(dag: TaskDAG, tool_registry, llm_call=None) -> list[NodeResult]:
         # Execute this node
         result = _execute_node(node, tool_registry, results, llm_call)
         results[node.id] = result
-        completed.add(node.id)
 
-        # Check if we already have the result for this node
-        # (it might have been completed by a dependency chain)
+        if result.success:
+            completed.add(node.id)
+        else:
+            failed.add(node.id)
+            # Cancel dependents
+            _propagate_cancellation(node.id, dag.nodes, results, cancelled)
 
         # Find next ready nodes
-        ready = _find_ready_nodes(dag.nodes, completed)
+        ready = _find_ready_nodes(dag.nodes, completed, failed)
         for r in ready:
             if r.id not in visited:
                 queue.append(r)
 
         # Safety: prevent infinite loops
-        if len(completed) >= len(dag.nodes) * 2:
+        if len(completed) + len(failed) + len(cancelled) >= len(dag.nodes):
             break
 
-    # Return results in DAG order
-    return [results.get(n.id, NodeResult(node_id=n.id, success=False, error="Not executed"))
-            for n in dag.nodes]
+    # Return results in DAG order, filling missing nodes as cancelled
+    final_results = []
+    for n in dag.nodes:
+        if n.id in results:
+            final_results.append(results[n.id])
+        elif n.id in cancelled or any(dep in failed for dep in n.depends_on):
+            final_results.append(NodeResult(
+                node_id=n.id, success=False,
+                error="Cancelled due to dependency failure"
+            ))
+        else:
+            final_results.append(NodeResult(
+                node_id=n.id, success=False,
+                error="Not executed before termination"
+            ))
+
+    return final_results
 
 
-def _find_ready_nodes(nodes: list[DAGNode], completed: set) -> list[DAGNode]:
+def _propagate_cancellation(failed_node_id: str, nodes: list, results: dict, cancelled: set):
+    """Mark all dependents of a failed node as cancelled."""
+    for n in nodes:
+        if failed_node_id in n.depends_on and n.id not in results:
+            cancelled.add(n.id)
+            results[n.id] = NodeResult(
+                node_id=n.id,
+                success=False,
+                error=f"Cancelled: dependency '{failed_node_id}' failed",
+            )
+            # Recurse for deeper dependents
+            _propagate_cancellation(n.id, nodes, results, cancelled)
+
+
+def _find_ready_nodes(nodes: list[DAGNode], completed: set, failed: set | None = None) -> list[DAGNode]:
     """Find nodes whose dependencies are all satisfied."""
+    failed = failed or set()
     ready = []
     for n in nodes:
-        if n.id in completed:
+        if n.id in completed or n.id in failed:
             continue
         if all(dep in completed for dep in n.depends_on):
             ready.append(n)

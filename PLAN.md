@@ -25,10 +25,11 @@
 - [x] Трекінг стратегій: success rate per strategy (fast_path vs llm_planner)
 - [x] Self-tuning: якщо fast_path має >80% success → автоматичний вибір
 
-### P1.4 ✦ Failure handling per sub-tree
-- [ ] Якщо node fail → retry (1-2 рази)
-- [ ] Якщо retry fail → реплан тільки цієї гілки DAG
-- [ ] Логування помилок для Reflection
+### P1.4 ✦ Failure handling per sub-tree (DONE)
+- [x] Якщо node fail → retry (до node.retry разів)
+- [x] Якщо retry fail → реплан тільки цієї гілки DAG
+- [x] Логування помилок для Reflection
+- [x] Cancelled nodes позначені, незалежні гілки продовжують
 
 ---
 
