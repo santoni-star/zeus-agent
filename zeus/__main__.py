@@ -246,7 +246,7 @@ def process_via_modules(text: str) -> str:
         await bus.publish(Event(USER_INPUT, {"text": text}, source="cli"))
 
         import time
-        deadline = time.time() + 30
+        deadline = time.time() + 60
         while time.time() < deadline:
             if outputs:
                 result = outputs[-1].get("text", "")
@@ -920,7 +920,7 @@ def main():
 
                 # Wait for response
                 import time
-                deadline = time.time() + 30
+                deadline = time.time() + 60
                 last_len = 0
                 while time.time() < deadline:
                     if len(outputs) > last_len:

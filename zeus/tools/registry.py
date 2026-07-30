@@ -106,8 +106,23 @@ class ToolRegistry:
         "find_api": {
             "category": "web",
             "tags": ["api", "find", "public", "search", "discover", "endpoint",
-                     "rest", "dataset", "free api"],
+                     "rest", "dataset", "free api", "weather", "forecast",
+                     "crypto", "bitcoin", "stock", "news", "joke", "facts",
+                     "cat", "dog", "movie", "music", "translate", "translate",
+                     "exchange", "currency", "ip", "email", "validate"],
             "related": ["api_call", "web_search", "web_fetch"],
+        },
+        "web_search": {
+            "category": "web",
+            "tags": ["search", "web", "news", "information", "internet",
+                     "weather", "forecast", "query", "lookup", "google"],
+            "related": ["web_fetch", "api_call", "find_api"],
+        },
+        "api_call": {
+            "category": "web",
+            "tags": ["api", "rest", "http", "request", "json", "post", "get",
+                     "call", "fetch", "endpoint", "weather", "crypto", "data"],
+            "related": ["web_fetch", "web_search", "find_api"],
         },
     }
 

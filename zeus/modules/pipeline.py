@@ -6,14 +6,17 @@ Emits:         task.completed, task.failed, user.output
 This is the main execution engine — processes complex tasks
 through the full DAG pipeline.
 """
-
 from __future__ import annotations
 import asyncio
+import logging
 import time
-from zeus.module import Module, Event, USER_OUTPUT
+
+from zeus.module import Module, Event, USER_INPUT, USER_OUTPUT
 from zeus.planner import plan
 from zeus.runtime import execute_dag
 from zeus.synthesizer import synthesize
+
+logger = logging.getLogger(__name__)
 
 
 class PipelineModule(Module):
@@ -61,18 +64,46 @@ class PipelineModule(Module):
         # Check if context result was emitted (relayed via out-of-band)
         # For now, we just proceed without it - memory context is optional
 
-        # 2. Plan with context
-        tools_schemas = self._tool_registry.schemas() if self._tool_registry else []
+        # 2. Plan with context (filter tools by query relevance)
+        tools_schemas = self._tool_registry.schemas(filter_query=text) if self._tool_registry else []
         dag = plan(text=text, tools=tools_schemas, llm_call=self._llm_call)
 
         if not dag:
-            await self.emit(USER_OUTPUT, {
-                "text": "Planner не зміг створити план для цієї задачі.",
-                "source": "pipeline",
+            await self.emit("user.output", {"text": "Не вдалося створити план.", "source": "error", "event_id": event.id})
+            return
+
+        # Validate tool nodes against available tools
+        tool_names = set(self._tool_registry.names()) if self._tool_registry else set()
+        bad_nodes = [
+            n for n in dag.nodes
+            if n.type == "tool" and n.tool not in tool_names
+        ]
+        if bad_nodes:
+            bad_tools = [n.tool for n in bad_nodes]
+            logger.warning("Planner made up tools: %s — falling back to find_api", bad_tools)
+            if tool_names and "find_api" in tool_names:
+                try:
+                    from zeus.tools.find_api import execute as find_api_execute
+                    result_text = find_api_execute({
+                        "action": "call",
+                        "query": text,
+                        "no_auth": False,
+                        "https_only": True,
+                    })
+                    if not result_text.startswith("❌"):
+                        await self.emit("user.output", {"text": result_text, "source": "find_api", "event_id": event.id})
+                        return
+                except Exception as fe:
+                    logger.debug("find_api fallback failed: %s", fe)
+            await self.emit("user.output", {
+                "text": f"Не можу відповісти: планувальник створив неіснуючі інструменти {bad_tools}. "
+                        f"Доступно: {', '.join(sorted(tool_names)[:10])}",
+                "source": "error",
+                "event_id": event.id,
             })
             return
 
-        # 2. Validate & Execute
+        # 3. Validate and Execute
         results = execute_dag(dag, self._tool_registry, llm_call=self._llm_call)
 
         # 3. Synthesize

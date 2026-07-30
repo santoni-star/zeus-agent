@@ -280,10 +280,35 @@ def _do_call(apis: list[dict], query: str, api_name: str = "",
     target_name = api_name or ""
 
     if not target_name:
-        # Find first matching API
+        # Find best matching API — score by relevance, not first alphabetically
+        q = query.lower()
+        q_words = set(q.split())
+
+        def score_api(api):
+            s = 0
+            name_desc = f"{api['name']} {api['description']}".lower()
+            for word in q_words:
+                if word in api['name'].lower():
+                    s += 5
+                elif word in api['description'].lower():
+                    s += 3
+                if word in api.get('category', '').lower():
+                    s += 2
+            # Prefer JSON APIs over HTML pages
+            url = api.get('url', '').lower()
+            if '.json' in url or '/api/' in url:
+                s += 1
+            return s
+
         results = _search(apis, query, category, no_auth=True, https_only=True)
         if not results:
-            return f"❌ No no-auth APIs found for '{query}'. Try info to check auth requirements."
+            # Try with auth too
+            results = _search(apis, query, category, no_auth=False, https_only=True)
+        if not results:
+            return f"❌ No APIs found for '{query}'."
+
+        # Sort by relevance score
+        results.sort(key=score_api, reverse=True)
         target = results[0]
     else:
         for api in apis:

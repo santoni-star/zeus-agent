@@ -1,12 +1,15 @@
 """Router — directs classified intents to the right handler."""
 
 from __future__ import annotations
+import logging
 import sys
 
 from zeus.models.types import ClassificationResult, ExecutionResult
 from zeus.planner import plan
 from zeus.runtime import execute_dag
 from zeus.synthesizer import synthesize
+
+logger = logging.getLogger(__name__)
 
 
 # Commands that should be executed directly (not via DAG)
@@ -144,12 +147,45 @@ def _handle_complex_task(text: str, tool_registry, llm_call) -> ExecutionResult:
             output="Planner не зміг створити план для цієї задачі.",
         )
 
-    # 2. Validate DAG
+    # 2. Validate DAG against available tools
     errors = dag.validate()
     if errors:
         return ExecutionResult(
             success=False,
             output=f"План містить помилки: {'; '.join(errors)}",
+        )
+
+    # Check that all tool nodes reference real tools
+    tool_names = set(tool_registry.names())
+    bad_nodes = [
+        n for n in dag.nodes
+        if n.type == "tool" and n.tool not in tool_names
+    ]
+    if bad_nodes:
+        bad_tools = [n.tool for n in bad_nodes]
+        logger.warning("Planner made up tools: %s — falling back to find_api", bad_tools)
+        # Fall back: try find_api(action='call') as a smarter alternative
+        if tool_registry.get_schema("find_api"):
+            try:
+                from zeus.tools.find_api import execute as find_api_execute
+                result_text = find_api_execute({
+                    "action": "call",
+                    "query": text,
+                    "no_auth": False,
+                    "https_only": True,
+                })
+                if not result_text.startswith("❌"):
+                    return ExecutionResult(
+                        success=True,
+                        output=result_text,
+                    )
+            except Exception as fe:
+                logger.debug("find_api fallback failed: %s", fe)
+
+        return ExecutionResult(
+            success=False,
+            output=f"Планувальник створив неіснуючі інструменти: {bad_tools}. "
+                   f"Доступні: {', '.join(sorted(tool_names)[:10])}...",
         )
 
     # 3. Execute DAG
