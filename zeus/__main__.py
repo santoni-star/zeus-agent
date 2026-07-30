@@ -968,30 +968,47 @@ def main():
                 # ── Save to conversation history ──────────
                 _history.add("user", text)
 
-                # Process via modular EventBus
-                outputs.clear()
-                loop.run_until_complete(bus.publish(Event(USER_INPUT, {"text": text}, source="cli")))
+                # Process via direct pipeline (faster, no EventBus overhead)
+                from zeus.template_planner import get_template_planner
+                from zeus.runtime import execute_dag
+                from zeus.synthesizer import synthesize
 
-                # Wait for response
-                import time
-                deadline = time.time() + 60
-                last_len = 0
-                while time.time() < deadline:
-                    if len(outputs) > last_len:
-                        for i in range(last_len, len(outputs)):
-                            out_text = outputs[i].get("text", "")
+                outputs.clear()
+                dag = get_template_planner().plan(
+                    text=text,
+                    tools=_tool_registry.schemas() if hasattr(_tool_registry, 'schemas') else [],
+                    llm_call=_llm_call,
+                    tool_registry=_tool_registry,
+                )
+
+                if dag:
+                    results = execute_dag(dag, _tool_registry, llm_call=_llm_call)
+                    if all(r.success for r in results):
+                        if _llm_call:
+                            out_text = synthesize(goal=dag.goal, results=results, llm_call=_llm_call)
+                        else:
+                            out_text = "\n".join(r.output for r in results) if results else ""
+                        print()
+                        print(out_text)
+                        print()
+                        if out_text:
+                            _history.add("assistant", out_text)
+                    else:
+                        for r in results:
                             print()
-                            print(out_text)
+                            print(r.output or r.error)
                             print()
-                            # Save assistant response to history
-                            if out_text and not any(
-                                out_text.startswith(prefix)
-                                for prefix in ["📋", "📊", "💡", "ℹ", "⚠", "✅", "❌", "📝", "⏳", "🔴", "🟡", "🟢", "⚪"]
-                            ):
-                                _history.add("assistant", out_text)
-                        last_len = len(outputs)
-                        break
-                    loop.run_until_complete(asyncio.sleep(0.1))
+                elif _llm_call:
+                    # Fallback: direct LLM
+                    out_text = _llm_call([{"role": "user", "content": text}], [])
+                    print()
+                    print(out_text)
+                    print()
+                    _history.add("assistant", out_text)
+                else:
+                    print()
+                    print("Не можу обробити запит (немає LLM або інструментів).")
+                    print()
 
                 # MCP hot disconnect: clean up after query completes
                 if _mcp_needs_disconnect:
