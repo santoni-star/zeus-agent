@@ -22,7 +22,7 @@
 - [x] Memory skeleton (SQLite+FTS5 for sessions, facts, extractor)
 - [x] One real task: searched, analyzed, saved results to file
 - [x] Comparison benchmark vs Hermes Agent on 5 tasks (Zeus 5/5)
-- [ ] L0 Proactive Engine (triggers, patterns, scheduled actions)
+- [x] L0 Proactive Engine (scheduler, triggers, background tasks)
 
 **Deliverable:** `zeus run "find a skill for docker"` works.
 
@@ -30,7 +30,7 @@
 
 **Goal:** Zeus can plan before executing.
 
-- [ ] Task DAG implementation
+- [x] Task DAG implementation
   - [ ] Goal → decomposition → DAG
   - [ ] Dependency resolution
   - [ ] Parallel detection
