@@ -89,6 +89,11 @@ DEFAULT_CONFIG = {
         "include_config": True,
         "branch": "agent-state",
         "interval_minutes": 60,
+        "actions": {
+            "enabled": True,
+            "auto_generate": True,
+            "validate_docs": True,
+        },
     },
 }
 

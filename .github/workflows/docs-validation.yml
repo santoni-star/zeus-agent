@@ -1,0 +1,43 @@
+name: Docs Validation
+on:
+  push:
+    branches: [master, main, agent-state]
+  pull_request:
+    branches: [master, main]
+  workflow_dispatch:
+
+jobs:
+  validate-docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate Tools
+        run: |
+          python -c "
+import re
+import os
+from pathlib import Path
+
+# Check that all tools in zeus/tools/ are documented in TOOLS.md
+tools_dir = Path('zeus/tools')
+docs_file = Path('TOOLS.md')
+if not docs_file.exists():
+    print('::warning::TOOLS.md not found')
+    exit(0)
+
+docs_text = docs_file.read_text()
+missing = []
+for f in tools_dir.glob('*.py'):
+    if f.name.startswith('_') or f.name in ('registry.py', 'dynamic.py'):
+        continue
+    name = f.stem
+    if name not in docs_text:
+        missing.append(name)
+        print(f'::warning::Tool {name} not documented in TOOLS.md')
+
+if missing:
+    print(f'Missing docs for: {missing}')
+else:
+    print('All tools are documented.')
+"
+

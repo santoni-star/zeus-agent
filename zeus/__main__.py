@@ -34,6 +34,7 @@ from zeus.memory.history import ConversationBuffer, HistorySearcher, search_hist
 from zeus.memory.profile import UserProfile, FactStore
 from zeus.skills import SkillManager, get_skill_manager
 from zeus.sync import GitSync, get_sync, auto_sync
+from zeus.actions import ActionsManager, get_actions, auto_generate_workflows
 from zeus.modules.classifier import ClassifierModule
 from zeus.modules.memory import MemoryModule
 from zeus.modules.router import RouterModule
@@ -357,6 +358,7 @@ def main():
         _facts = FactStore()
         _skills = get_skill_manager()
         _sync = get_sync()
+        _actions = get_actions()
         # Auto-setup sync if token is available
         if _config.get("sync.enabled", False):
             try:
@@ -367,6 +369,11 @@ def main():
                         repo=_config.get("sync.repo", ""),
                         branch=_config.get("sync.branch", "agent-state"),
                     )
+                    # Auto-generate GitHub Actions workflows
+                    if _config.get("sync.actions.enabled", True):
+                        generated = auto_generate_workflows()
+                        if generated:
+                            logger.info("Auto-generated workflows: %s", generated)
             except Exception as e:
                 logger.debug("Sync auto-setup: %s", e)
 
@@ -770,6 +777,61 @@ def main():
                     print("  /sync off      — disable auto-sync")
                     print("  /sync log [n]  — show recent commits")
                     continue
+
+                # ── Actions commands ──────────────────────
+                if text == "/actions" or text == "/actions list":
+                    print(_actions.status_report())
+                    continue
+                if text.startswith("/actions enable "):
+                    wf_id = text[16:].strip()
+                    try:
+                        _actions.enable(wf_id)
+                        print(f"✅ Enabled workflow: {wf_id}")
+                        # Auto-sync the changes
+                        if _sync._configured:
+                            _sync.commit(message=f"enable action: {wf_id}")
+                    except ValueError as e:
+                        print(f"❌ {e}")
+                    continue
+                if text.startswith("/actions disable "):
+                    wf_id = text[17:].strip()
+                    try:
+                        _actions.disable(wf_id)
+                        print(f"⏸ Disabled workflow: {wf_id}")
+                        if _sync._configured:
+                            _sync.commit(message=f"disable action: {wf_id}")
+                    except ValueError as e:
+                        print(f"❌ {e}")
+                    continue
+                if text == "/actions generate":
+                    generated = _actions.generate_all()
+                    if generated:
+                        print(f"✅ Generated {len(generated)} workflow(s): {', '.join(generated)}")
+                        if _sync._configured:
+                            _sync.commit(message="regenerate workflows")
+                    else:
+                        print("⚠ No workflows were generated (all disabled)")
+                    continue
+                if text == "/actions validate":
+                    missing_tools = _actions.validate_tools_docs()
+                    missing_modules = _actions.validate_modules_docs()
+                    print("\n📋 Docs validation:\n")
+                    if not missing_tools and not missing_modules:
+                        print("  ✅ All tools and modules are documented!")
+                    if missing_tools:
+                        print(f"  ❌ Missing from TOOLS.md: {', '.join(missing_tools)}")
+                    if missing_modules:
+                        print(f"  ❌ Missing from ARCHITECTURE.md: {', '.join(missing_modules)}")
+                    continue
+                if text.startswith("/actions "):
+                    print("Usage: /actions list | enable <id> | disable <id> | generate | validate")
+                    print("  /actions list          — show workflow status")
+                    print("  /actions enable test   — enable test workflow")
+                    print("  /actions disable lint  — disable lint workflow")
+                    print("  /actions generate      — regenerate all workflow files")
+                    print("  /actions validate      — check docs match code")
+                    continue
+
 
                 # Save to conversation history
                 _history.add("user", text)

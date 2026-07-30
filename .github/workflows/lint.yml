@@ -1,0 +1,23 @@
+name: Lint
+on:
+  push:
+    branches: [master, main, agent-state]
+  pull_request:
+    branches: [master, main]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install linters
+        run: |
+          pip install flake8
+      - name: Lint
+        run: |
+          flake8 zeus/ --max-line-length=120 --count --statistics
+

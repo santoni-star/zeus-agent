@@ -205,6 +205,7 @@ Skill (SKILL.md):
 | self_review | user.input | user.output | — |
 | telemetry | all events | (none, records to DB) | telemetry.enabled |
 | gateway | user.output | user.input | gateway.enabled |
+| scheduler | cron events | scheduled.task | scheduler.enabled |
 
 ---
 
@@ -222,6 +223,8 @@ zeus/
 ├── resilient.py        ResilientLLM (retry + fallback)
 ├── performance.py      CachedLLM (LRU + TTL)
 ├── delegate.py         DelegateManager (child agent subprocess)
+├── sync.py             GitSync (self-backup to GitHub)
+├── actions.py          GitHub Actions management (CI/CD workflows)
 ├── memory/
 │   ├── session.py      SessionStore (SQLite + FTS5)
 │   ├── history.py      ConversationBuffer + HistorySearcher

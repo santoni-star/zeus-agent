@@ -243,7 +243,7 @@ User: "search for async functions"
 
 ---
 
-### 9. `utility` — Utilities
+### 9. `utility` / `utils` — Utilities
 
 Calculator, timestamp, UUID generation, JSON formatting.
 
@@ -289,15 +289,15 @@ User: "create a tool that converts markdown to html"
 
 ## Tool Statistics
 
-| Tool | Lines | Priority | Uses LLM? |
-|------|-------|----------|-----------|
-| terminal | ~60 | ⚡ fast | no |
-| file | ~100 | ⚡ fast | no |
-| utility | ~100 | ⚡ fast | no |
-| search_files | ~150 | ⚡ fast | no |
-| structured_file | ~200 | ⚡ medium | no |
-| web_search | ~130 | 🌐 medium | no |
-| web_fetch | ~140 | 🌐 medium | no |
-| code_exec | ~100 | ⚡ fast | no |
-| session_search | ~50 | 📚 medium | no (FTS5) |
-| dynamic tools | ~400 | varies | NL→code |
+| tool (file) | lines | priority | uses LLM? |
+|---|---|---|---|
+| terminal (terminal.py) | ~60 | ⚡ fast | no |
+| file (file.py) | ~100 | ⚡ fast | no |
+| utility (utils.py) | ~100 | ⚡ fast | no |
+| search_files (search_files.py) | ~150 | ⚡ fast | no |
+| structured_file (structured.py) | ~200 | ⚡ medium | no |
+| web_search (web.py) | ~130 | 🌐 medium | no |
+| web_fetch (web_fetch.py) | ~140 | 🌐 medium | no |
+| code_exec (code.py) | ~100 | ⚡ fast | no |
+| session_search (search_session.py) | ~50 | 📚 medium | no (FTS5) |
+| dynamic (dynamic.py) | ~400 | varies | NL→code |
