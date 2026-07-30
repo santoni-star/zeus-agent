@@ -35,6 +35,7 @@ from zeus.memory.profile import UserProfile, FactStore
 from zeus.skills import SkillManager, get_skill_manager
 from zeus.sync import GitSync, get_sync, auto_sync
 from zeus.actions import ActionsManager, get_actions, auto_generate_workflows
+from zeus.mcp_client import MCPClientManager, get_mcp_manager, format_mcp_status, MCP_AVAILABLE
 from zeus.modules.classifier import ClassifierModule
 from zeus.modules.memory import MemoryModule
 from zeus.modules.router import RouterModule
@@ -359,6 +360,7 @@ def main():
         _skills = get_skill_manager()
         _sync = get_sync()
         _actions = get_actions()
+        _mcp = get_mcp_manager()
         # Auto-setup sync if token is available
         if _config.get("sync.enabled", False):
             try:
@@ -393,7 +395,28 @@ def main():
             # Scheduler already initialized above
             pass
 
-        # Optional GatewayModule for Telegram
+        # Start MCP connections (async, in background)
+        mcp_servers_config = _config.get("mcp_servers", {})
+        if mcp_servers_config:
+            _mcp._servers_config = {k: v for k, v in mcp_servers_config.items()
+                                    if isinstance(v, dict)}
+            # Start connections in a background thread
+            import threading
+            def _start_mcp():
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    loop.run_until_complete(_mcp.start())
+                    # Register MCP tools in the registry
+                    count = _mcp.register_tools(_tool_registry)
+                    if count:
+                        logger.info("MCP: registered %d tools", count)
+                finally:
+                    loop.close()
+
+            mcp_thread = threading.Thread(target=_start_mcp, daemon=True)
+            mcp_thread.start()
+            logger.info("MCP: starting %d server(s) in background", len(mcp_servers_config))
         _gateway_mod = None
         enable_gateway = args.gateway or _config.get("gateway.enabled", False)
         if enable_gateway:
@@ -832,8 +855,45 @@ def main():
                     print("  /actions validate      — check docs match code")
                     continue
 
+                # ── MCP commands ──────────────────────────
+                if text == "/mcp" or text == "/mcp status":
+                    print(_mcp.format_status())
+                    continue
+                if text.startswith("/mcp reconnect "):
+                    name = text[15:].strip()
+                    if not name:
+                        print("Usage: /mcp reconnect <server_name>")
+                        continue
+                    try:
+                        import asyncio
+                        loop = asyncio.new_event_loop()
+                        success = loop.run_until_complete(_mcp.reconnect_server(name))
+                        loop.close()
+                        if success:
+                            count = _mcp.register_tools(_tool_registry)
+                            print(f"✅ Reconnected '{name}' ({count} tools registered)")
+                        else:
+                            print(f"❌ Failed to reconnect '{name}'")
+                    except Exception as e:
+                        print(f"❌ Reconnect failed: {e}")
+                    continue
+                if text == "/mcp list":
+                    statuses = _mcp.get_status()
+                    if not statuses:
+                        print("📡 No MCP servers configured.")
+                    else:
+                        print(f"\n📡 MCP Servers:\n")
+                        for s in statuses:
+                            tools = s.get("tools", 0)
+                            tools_str = f" ({tools} tools)" if tools else ""
+                            icon = "✅" if s.get("connected") else "❌"
+                            err = f" — {s['error']}" if s.get("error") else ""
+                            print(f"  {icon} {s['name']}{tools_str}{err}")
+                        total = sum(s.get("tools", 0) for s in statuses)
+                        print(f"\n  Total: {total} tools across {len(statuses)} servers")
+                    continue
 
-                # Save to conversation history
+                # ── Save to conversation history ──────────
                 _history.add("user", text)
 
                 # Process via modular EventBus

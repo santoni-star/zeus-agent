@@ -95,6 +95,13 @@ DEFAULT_CONFIG = {
             "validate_docs": True,
         },
     },
+    "mcp_servers": {
+        # "time": {
+        #     "command": "uvx",
+        #     "args": ["mcp-server-time"],
+        #     "enabled": True,
+        # },
+    },
 }
 
 
