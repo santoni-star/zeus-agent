@@ -321,11 +321,12 @@ class TemplatePlanner:
     def __init__(self, llm_planner: Callable | None = None):
         self._llm_planner = llm_planner or llm_plan
         self._templates: list[DAGTemplate] = []
+        self._skill_manager = None  # lazy import
         self._load()
 
     def plan(self, text: str, tools: list[dict], llm_call: Callable | None = None,
              tool_registry=None) -> TaskDAG | None:
-        """Plan a task — try templates first, fall back to LLM.
+        """Plan a task — try templates first, then learned skills, then LLM fallback.
 
         Args:
             text: User query
@@ -336,18 +337,25 @@ class TemplatePlanner:
         Returns:
             TaskDAG or None.
         """
-        # 1. Try templates
+        # 1. Try built-in templates
         dag = self._template_plan(text)
         if dag:
-            logger.info("TemplatePlanner: matched '%s'", dag.metadata.get("template", "?"))
+            logger.info("TemplatePlanner: matched built-in '%s'", dag.metadata.get("template", "?"))
             return dag
 
-        # 2. Fall back to LLM planner
+        # 2. Try learned skills (user's accumulated skills)
+        skill_dag = self._skill_plan(text)
+        if skill_dag:
+            logger.info("TemplatePlanner: matched skill '%s'", skill_dag.metadata.get("skill", "?"))
+            return skill_dag
+
+        # 3. Fall back to LLM planner
         if llm_call:
+            logger.info("TemplatePlanner: no template/skill — using LLM planner")
             dag = self._llm_planner(text=text, tools=tools, llm_call=llm_call)
             if dag:
-                # Save as new template
-                self._save_template_from_dag(dag, text)
+                # Save as new skill (student learns!)
+                self._save_plan_as_skill(dag, text)
             return dag
 
         return None
@@ -369,6 +377,179 @@ class TemplatePlanner:
             return dag
 
         return None
+
+    def _skill_plan(self, text: str) -> TaskDAG | None:
+        """Try to match query against learned skills (user's accumulated knowledge).
+
+        If a skill's tags/description match the query, we build a DAG
+        from the skill's tool-call steps.
+
+        Returns:
+            TaskDAG or None.
+        """
+        try:
+            from zeus.skills import SkillManager
+            if self._skill_manager is None:
+                self._skill_manager = SkillManager()
+            skills = self._skill_manager.list_skills()
+
+            text_lower = text.lower()
+            best_score = 0
+            best_skill = None
+
+            for skill in skills:
+                score = 0
+                # Check tags
+                for tag in skill.get("tags", []):
+                    if isinstance(tag, str) and tag.lower() in text_lower:
+                        score += 3
+                    # Also check if tag words appear in query
+                    for word in text_lower.split():
+                        if len(word) > 3 and word in tag.lower():
+                            score += 2
+                # Check description
+                desc = skill.get("description", "").lower()
+                for word in text_lower.split():
+                    if len(word) > 3 and word in desc:
+                        score += 1
+
+                if score > best_score:
+                    best_score = score
+                    best_skill = skill
+
+            if best_skill and best_score >= 3:
+                skill_name = best_skill.get("name", "")
+                if skill_name:
+                    skill = self._skill_manager.get(skill_name)
+                    if skill is not None:
+                        steps = skill.get_steps()
+                        if steps:
+                            # Build a DAG from skill steps
+                            nodes = []
+                            for i, step in enumerate(steps):
+                                step_lower = step.lower()
+                                node_id = f"step_{i}"
+                                params = {}
+
+                                # Try to detect which tool from step text
+                                if "api" in step_lower or "fetch" in step_lower:
+                                    tool = "find_api"
+                                    params["action"] = "call"
+                                    params["query"] = text
+                                elif "search" in step_lower or "find" in step_lower:
+                                    tool = "web_search"
+                                    params["query"] = text
+                                elif "execute" in step_lower or "run" in step_lower:
+                                    tool = "terminal"
+                                    params["command"] = text
+                                elif "read" in step_lower or "file" in step_lower:
+                                    tool = "file"
+                                    params["action"] = "read"
+                                else:
+                                    continue
+
+                                nodes.append(DAGNode(
+                                    id=node_id,
+                                    type="tool",
+                                    tool=tool,
+                                    params=params,
+                                    depends_on=[],
+                                ))
+
+                            if nodes:
+                                return TaskDAG(
+                                    goal=best_skill.get("description", text),
+                                    nodes=nodes,
+                                    metadata={"skill": best_skill.get("name", "learned"), "match_score": best_score},
+                                )
+
+            return None
+        except Exception:
+            return None
+
+    def _save_plan_as_skill(self, dag: TaskDAG, text: str):
+        """Save a successful LLM plan as a reusable skill.
+
+        This is how Zeus learns: each successful LLM plan becomes
+        a skill file in ~/.zeus/skills/, so next time a similar
+        query comes, the template planner can match it directly.
+        """
+        if not dag or not dag.nodes:
+            return
+
+        # Extract keywords from text for skill name + tags
+        words = text.lower().split()
+        stopwords = {"the", "a", "an", "is", "are", "was", "were", "to", "of",
+                     "in", "for", "on", "at", "by", "with", "from", "and",
+                     "or", "not", "but", "how", "what", "why", "when", "where",
+                     "who", "can", "you", "i", "we", "they", "it", "do", "does",
+                     "tell", "show", "get", "find", "make", "use", "need", "want"}
+        keywords = sorted(set(w for w in words if len(w) > 2 and w not in stopwords))
+        if not keywords:
+            return
+
+        # Generate skill name from first 2-3 keywords
+        skill_name = "-".join(keywords[:3]).lower()
+        tags_str = ", ".join(f'"{kw}"' for kw in keywords[:5])
+
+        # Build DAG description as markdown
+        steps_lines = []
+        for i, node in enumerate(dag.nodes, 1):
+            tool = node.tool or "?"
+            params_str = "; ".join(f"{k}={v}" for k, v in (node.params or {}).items())
+            steps_lines.append(f"    {i}. Call `{tool}` with: {params_str}")
+
+        steps_md = "\n".join(steps_lines) if steps_lines else "    No steps recorded."
+
+        skill_content = f"""---
+name: {skill_name}
+description: Zeus learned: {text[:80]}
+tags: [{tags_str}]
+version: 1.0.0
+source: template-planner
+---
+
+## Query
+{text}
+
+## Steps
+{steps_md}
+
+## Tools Used
+{', '.join(n.tool for n in dag.nodes if n.tool)}
+"""
+
+        # Save via SkillManager
+        try:
+            from zeus.skills import SkillManager
+            sm = self._skill_manager or SkillManager()
+            self._skill_manager = sm
+
+            # Extract tool steps as step strings
+            steps = []
+            commands = []
+            for i, node in enumerate(dag.nodes, 1):
+                tool = node.tool or "?"
+                params_str = "; ".join(f"{k}={v}" for k, v in (node.params or {}).items())
+                steps.append(f"Call `{tool}` with: {params_str}")
+                # Also try to extract a command
+                if tool == "web_search" and "query" in (node.params or {}):
+                    commands.append(f'python -m zeus "{node.params["query"]}"')
+                elif tool == "terminal" and "command" in (node.params or {}):
+                    commands.append(node.params["command"])
+
+            tags = keywords[:5]
+            skill_path = sm.create(
+                name=skill_name,
+                description=f"Zeus learned: {text[:80]}",
+                steps=steps,
+                commands=commands if commands else None,
+                tags=tags,
+            )
+            if skill_path:
+                logger.info("Saved plan as skill: %s (%s)", skill_name, skill_path)
+        except Exception as e:
+            logger.debug("Could not save skill: %s", e)
 
     def _save_template_from_dag(self, dag: TaskDAG, text: str):
         """Save a successful LLM plan as a new template."""
