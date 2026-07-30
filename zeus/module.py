@@ -111,6 +111,10 @@ REFLECTION_TASK_FAILED = "reflection.task_failed"
 PROACTIVE_TRIGGER = "proactive.trigger"
 PROACTIVE_TICK = "proactive.tick"
 
+# Context
+CONTEXT_REQUEST = "context.request"
+CONTEXT_RESULT = "context.result"
+
 
 # ── EventBus ───────────────────────────────────────────────
 

@@ -24,6 +24,7 @@ import logging
 import re
 import threading
 import time
+import uuid
 from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
@@ -84,8 +85,83 @@ class Scheduler:
         logger.info("Scheduled job %s every %ss: %s", job_id, interval_seconds, task[:60])
         return job_id
 
+    def schedule_watchdog(
+            self,
+            interval: int,
+            check_fn: callable,
+            task: str,
+            name: str | None = None,
+        ) -> str:
+            """Schedule a watchdog: checks a condition every 'interval' seconds.
+
+            If check_fn() returns truthy (and wasn't true last check), fire 'task'.
+
+            Args:
+                interval: Check interval in seconds
+                check_fn: Function that returns True/False for condition
+                task: Task to execute when condition triggers
+                name: Optional job name
+
+            Returns:
+                Job ID
+            """
+            jid = f"wd_{uuid.uuid4().hex[:8]}"
+            next_run = time.time() + interval
+            self._jobs[jid] = {
+                "id": jid,
+                "kind": "watchdog",
+                "task": task,
+                "interval": interval,
+                "next_run": next_run,
+                "active": True,
+                "run_count": 0,
+                "created_at": time.time(),
+                "last_triggered": False,  # Track to avoid re-triggering
+                "check_fn": check_fn,
+            }
+            if name:
+                self._jobs[jid]["name"] = name
+            return jid
+
+    def schedule_memory_trigger(
+        self,
+        fact_pattern: str,
+        task: str,
+        interval: int = 300,
+        name: str | None = None,
+    ) -> str:
+        """Schedule a memory trigger: checks memory for a fact pattern.
+
+        Searches memory for 'fact_pattern' every 'interval' seconds.
+        If found AND not previously found, fires 'task'.
+
+        Args:
+            fact_pattern: Search query for memory
+            task: Task to execute when trigger fires
+            interval: Check interval in seconds
+            name: Optional job name
+
+        Returns:
+            Job ID
+        """
+        jid = f"mem_{uuid.uuid4().hex[:8]}"
+        self._jobs[jid] = {
+            "id": jid,
+            "kind": "memory_trigger",
+            "task": task,
+            "interval": interval,
+            "next_run": time.time() + interval,
+            "active": True,
+            "run_count": 0,
+            "created_at": time.time(),
+            "last_found": False,
+            "fact_pattern": fact_pattern,
+        }
+        if name:
+            self._jobs[jid]["name"] = name
+        return jid
+
     def schedule_cron(
-        self, cron_expr: str, task: str,
         background: bool = False, job_id: str | None = None,
     ) -> str:
         """Schedule a task using a simple cron-like expression.

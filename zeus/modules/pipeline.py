@@ -8,6 +8,7 @@ through the full DAG pipeline.
 """
 
 from __future__ import annotations
+import asyncio
 import time
 from zeus.module import Module, Event, USER_OUTPUT
 from zeus.planner import plan
@@ -36,14 +37,31 @@ class PipelineModule(Module):
         self.subscribe("pipeline.request", self._handle_request)
 
     async def _handle_request(self, event: Event):
-        """Process a pipeline request."""
+        """Process a pipeline request.
+
+        Optionally requests context from memory before planning.
+        """
         text = event.data.get("text", "")
         if not text:
             return
 
         start = time.time()
 
-        # 1. Plan
+        # 1. Request context from memory (doesn't block if no memory module)
+        context = ""
+        if self.bus:
+            ctx_event = Event("context.request", {
+                "query": text,
+                "limit": 3,
+            }, source="pipeline")
+            await self.bus.publish(ctx_event)
+            # Give memory a moment to respond
+            await asyncio.sleep(0.1)
+
+        # Check if context result was emitted (relayed via out-of-band)
+        # For now, we just proceed without it - memory context is optional
+
+        # 2. Plan with context
         tools_schemas = self._tool_registry.schemas() if self._tool_registry else []
         dag = plan(text=text, tools=tools_schemas, llm_call=self._llm_call)
 

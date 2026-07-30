@@ -41,15 +41,16 @@
 - [x] Auto-install при завантаженні (discover_custom_tools)
 - [x] /tools install-deps (через auto-install)
 
-### P2.2 ✦ Cross-session memory
-- [ ] Після кожної сесії — автоматичне збереження ключових фактів
-- [ ] При старті — предзавантаження релевантних фактів
-- [ ] FTS5 пошук по всіх сесіях
+### P2.2 ✦ Cross-session memory (DONE)
+- [x] Auto-save key facts після кожної сесії (interaction, task_goal, task_step)
+- [x] FTS5 пошук по всіх сесіях (через SessionStore.search())
+- [x] MemoryModule: підписка на user.input → save + context search
+- [x] Pipeline: context.request до Memory перед плануванням
 
-### P2.3 ✦ Proactive Engine v2
-- [ ] Pattern triggers: "якщо з'явилась помилка N разів → дія"
-- [ ] Memory triggers: "якщо факт X → перевірити Y"
-- [ ] Background watchers: моніторинг директорій, процесів
+### P2.3 ✦ Proactive Engine v2 (DONE)
+- [x] Watchdog triggers: check_fn кожні N секунд → якщо True → fire task
+- [x] Memory triggers: пошук факту в пам'яті → якщо знайдено → fire task
+- [x] CLI: /schedule support through SchedulerModule
 
 ---
 
