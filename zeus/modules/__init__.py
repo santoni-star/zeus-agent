@@ -9,6 +9,8 @@ Available modules:
   - router: Intent routing
   - pipeline: Plan -> Execute -> Synthesize
   - reflection: Task pattern analysis and auto-tool creation
+  - gateway: Telegram bridge (optional)
+  - scheduler: Cron scheduling (optional)
 """
 
 from zeus.module import EventBus, Module, ModuleManager, Event
@@ -20,3 +22,4 @@ from zeus.modules.reflection import ReflectionModule
 from zeus.modules.sub_agent import SubAgentManager
 from zeus.modules.mcp import MCPModule
 from zeus.modules.gateway import GatewayModule
+from zeus.modules.scheduler import SchedulerModule
