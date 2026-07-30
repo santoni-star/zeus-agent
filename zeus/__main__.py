@@ -30,6 +30,7 @@ from zeus.tools.dynamic import (
 
 # Modular imports
 from zeus.module import EventBus, ModuleManager, Event, USER_INPUT, USER_OUTPUT
+from zeus.memory.history import ConversationBuffer, HistorySearcher, search_history
 from zeus.modules.classifier import ClassifierModule
 from zeus.modules.memory import MemoryModule
 from zeus.modules.router import RouterModule
@@ -346,9 +347,16 @@ def main():
         outputs = []
         bus.subscribe(USER_OUTPUT, lambda e: outputs.append(e.data))
 
+        # Shared conversation history buffer
+        _history = ConversationBuffer(max_turns=20)
+        _searcher = HistorySearcher()
+
         manager = ModuleManager(bus=bus)
         manager.register(ClassifierModule(bus=bus))
-        manager.register(RouterModule(bus=bus, tool_registry=_tool_registry, llm_call=_llm_call))
+        manager.register(RouterModule(
+            bus=bus, tool_registry=_tool_registry,
+            llm_call=_llm_call, history=_history,
+        ))
         manager.register(PipelineModule(bus=bus, tool_registry=_tool_registry, llm_call=_llm_call))
         manager.register(ReflectionModule(bus=bus, tool_registry=_tool_registry, llm_call=_llm_call))
         # Register enabled modules from config
@@ -547,6 +555,36 @@ def main():
                         print("✅ No errors in last 48 hours.")
                     continue
 
+                # ── History / Search commands ──────────────
+                if text == "/history":
+                    ctx = _history.context_prompt(max_chars=2000)
+                    if ctx:
+                        print(f"\n📜 Conversation history ({_history.turn_count} turns):\n")
+                        for turn in _history.turns[-10:]:
+                            label = "👤" if turn.role == "user" else "🤖"
+                            print(f"  {label} {turn.content[:300]}")
+                        print()
+                    else:
+                        print("📭 No conversation history yet.")
+                    continue
+                if text.startswith("/search "):
+                    query = text[8:].strip()
+                    if query:
+                        print(f"\n🔍 Searching: \"{query}\"...")
+                        result = _searcher.smart_search(query)
+                        print(_searcher.format_result(result))
+                    else:
+                        print("Usage: /search <query>")
+                    continue
+                if text == "/search" or text == "/s":
+                    print("Usage: /search <query>")
+                    print("  Example: /search що ми вчора робили")
+                    print("  Example: /search github обговорення")
+                    continue
+
+                # Save to conversation history
+                _history.add("user", text)
+
                 # Process via modular EventBus
                 outputs.clear()
                 loop.run_until_complete(bus.publish(Event(USER_INPUT, {"text": text}, source="cli")))
@@ -558,9 +596,16 @@ def main():
                 while time.time() < deadline:
                     if len(outputs) > last_len:
                         for i in range(last_len, len(outputs)):
+                            out_text = outputs[i].get("text", "")
                             print()
-                            print(outputs[i].get("text", ""))
+                            print(out_text)
                             print()
+                            # Save assistant response to history
+                            if out_text and not any(
+                                out_text.startswith(prefix)
+                                for prefix in ["📋", "📊", "💡", "ℹ", "⚠", "✅", "❌", "📝", "⏳", "🔴", "🟡", "🟢", "⚪"]
+                            ):
+                                _history.add("assistant", out_text)
                         last_len = len(outputs)
                         break
                     loop.run_until_complete(asyncio.sleep(0.1))

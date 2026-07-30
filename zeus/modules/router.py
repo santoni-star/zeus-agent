@@ -9,6 +9,7 @@ without affecting other modules.
 
 from __future__ import annotations
 from zeus.module import Module, Event, CLASSIFICATION_RESULT, USER_OUTPUT
+from zeus.memory.history import ConversationBuffer
 
 
 # Commands that should be executed directly
@@ -45,7 +46,7 @@ class RouterModule(Module):
       - Pipeline (Planner→Runtime→Synthesizer) for complex tasks
     """
 
-    def __init__(self, bus=None, tool_registry=None, llm_call=None):
+    def __init__(self, bus=None, tool_registry=None, llm_call=None, history=None):
         super().__init__(
             name="router",
             description="Routes intents to pipeline or direct handlers",
@@ -53,6 +54,7 @@ class RouterModule(Module):
         )
         self._tool_registry = tool_registry
         self._llm_call = llm_call
+        self._history: ConversationBuffer = history or ConversationBuffer()
 
     async def start(self):
         await super().start()
@@ -112,22 +114,40 @@ class RouterModule(Module):
             return f"Помилка: {e}"
 
     def _exec_chat(self, text: str) -> str:
-        """Return a chat response."""
+        """Return a chat response with history context."""
         text_lower = text.lower().strip("?.,!")
         for key, response in _CHAT_RESPONSES.items():
             if text_lower == key or text_lower.startswith(key):
                 return response
-        return "Чим можу допомогти?"
+
+        # LLM chat with full history
+        if not self._llm_call:
+            return "Чим можу допомогти?"
+
+        try:
+            history_msgs = self._history.to_api_messages(
+                system_prompt="Ти — Zeus Agent. Відповідай коротко і дружньо."
+            )
+            # Ensure last message is the current user input
+            if not history_msgs or history_msgs[-1].get("role") != "user" or history_msgs[-1].get("content") != text:
+                history_msgs.append({"role": "user", "content": text})
+
+            response = self._llm_call(messages=history_msgs, tools=None)
+            return response
+        except Exception as e:
+            return f"LLM помилка: {e}"
 
     def _exec_llm(self, text: str) -> str:
-        """Call LLM directly."""
+        """Call LLM directly with history context."""
         if not self._llm_call:
             return "LLM не налаштований."
         try:
-            return self._llm_call(
-                messages=[{"role": "system", "content": "Ти — Zeus Agent. Відповідай коротко і точно."},
-                          {"role": "user", "content": text}],
-                tools=None,
+            history_msgs = self._history.to_api_messages(
+                system_prompt="Ти — Zeus Agent. Відповідай коротко і точно."
             )
+            if not history_msgs or history_msgs[-1].get("role") != "user" or history_msgs[-1].get("content") != text:
+                history_msgs.append({"role": "user", "content": text})
+
+            return self._llm_call(messages=history_msgs, tools=None)
         except Exception as e:
             return f"LLM помилка: {e}"
