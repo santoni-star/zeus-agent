@@ -71,15 +71,45 @@ class DAGTemplate:
             score += 3
         return score
 
+    @staticmethod
+    def _substitute_query(text: str, query: str) -> str:
+        """Substitute {query} in a string, intelligently.
+
+        For weather templates, we extract the city/location name
+        from the full query rather than using the whole query.
+        """
+        if "{query}" not in text:
+            return text
+
+        # Try to extract location from query
+        query_lower = query.lower()
+        location = query  # default: use full query
+
+        # Weather-specific extraction: "weather in X" -> X
+        for prefix in ["weather in ", "weather at ", "forecast in ",
+                        "temperature in ", "weather for ", "forecast for "]:
+            if prefix in query_lower:
+                location = query[query_lower.index(prefix) + len(prefix):].strip()
+                break
+
+        # Also handle "what's the weather in X" etc.
+        for prefix in ["what is the weather in ", "what's the weather in ",
+                       "what is the temperature in ", "what's the temperature in "]:
+            if prefix in query_lower:
+                location = query[query_lower.index(prefix) + len(prefix):].strip()
+                break
+
+        return text.replace("{query}", location)
+
     def build_dag(self, text: str) -> TaskDAG:
         """Build a TaskDAG from this template, substituting query params."""
         nodes = []
         for n in self.nodes:
             params = dict(n.get("params", {}))
-            # Substitute {query} with original text
+            # Substitute {query} with intelligently extracted location
             for k, v in params.items():
                 if isinstance(v, str):
-                    params[k] = v.replace("{query}", text)
+                    params[k] = self._substitute_query(v, text)
 
             node = DAGNode(
                 id=n["id"],
@@ -130,14 +160,12 @@ _BUILTIN_TEMPLATES: list[DAGTemplate] = [
         description="Get current weather or forecast for a location",
         nodes=[
             {
-                "id": "find_weather_api",
-                "tool": "find_api",
+                "id": "weather_wttr",
+                "tool": "api_call",
                 "params": {
-                    "action": "call",
-                    "query": "weather forecast",
-                    "no_auth": False,
-                    "https_only": True,
-                    "api_params": '{"q": "{query}"}',
+                    "url": "https://wttr.in/{query}?format=%l:+%t+%C+%w+%h",
+                    "method": "GET",
+                    "timeout": 10,
                 },
                 "depends_on": [],
             },

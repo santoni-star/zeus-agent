@@ -54,19 +54,45 @@ _tool_registry = None
 
 
 def setup_tools() -> ToolRegistry:
-    """Initialize the tool registry with all available tools.
+    """Initialize the tool registry with ALL available tools.
 
-    Loads built-in tools + any custom tools from ~/.zeus/custom_tools/.
+    Loads built-in tools from zeus/tools/ + any custom tools.
+    Uses the full ToolRegistry (zeus.tools.registry) which discovers
+    all tools in the tools directory and supports schemas(filter_query=...),
+    suggest(), and tool metadata.
     """
+    # Use the full registry from zeus.tools.registry (discovers all tools)
+    from zeus.tools.registry import get_registry as get_full_registry
+    full = get_full_registry()
+    # The full registry has its own internal _tools dict with meta + schemas.
+    # We wrap it in the models.types.ToolRegistry interface for compatibility.
     registry = ToolRegistry()
-    registry.register("terminal", terminal_schema, terminal_execute)
-    registry.register("file", file_schema, file_execute)
-    registry.register("web_search", web_schema, web_execute)
 
+    # Register all discovered tools — iterate through internal _tools dict
+    for name in full.names():
+        try:
+            schema = full.get_schema(name)
+            if not schema:
+                continue
+            # Try to find the execute function from the tool module
+            import importlib
+            module_path = f"zeus.tools.{name}"
+            try:
+                mod = importlib.import_module(module_path)
+                execute_fn = getattr(mod, "execute", None)
+            except (ImportError, AttributeError):
+                continue
+            if execute_fn:
+                registry.register(name, schema, execute_fn)
+        except Exception:
+            continue
+
+    # Also discover custom tools
     custom = discover_custom_tools()
     for name, tool in custom.items():
         registry.register(name, tool["schema"], tool["handler"])
 
+    logger.info("Registered %d tools: %s", len(registry.tools), list(registry.tools.keys()))
     return registry
 
 
@@ -337,10 +363,38 @@ def main():
     elif os.environ.get("ZEUS_LLM_API_KEY"):
         _llm_call = configure_from_env()
 
-    # Single query via modular pipeline
+    # Single query — use direct pipeline (not EventBus)
     if args.query:
-        result = process_via_modules(args.query)
-        print(result)
+        # Direct path: template → plan → execute → synthesize
+        from zeus.template_planner import get_template_planner
+        from zeus.runtime import execute_dag
+        from zeus.synthesizer import synthesize
+
+        text = args.query
+        planner = get_template_planner()
+        tools_schemas = _tool_registry.schemas() if hasattr(_tool_registry, 'schemas') else []
+        dag = planner.plan(text=text, tools=tools_schemas, llm_call=_llm_call, tool_registry=_tool_registry)
+
+        if dag:
+            results = execute_dag(dag, _tool_registry, llm_call=_llm_call)
+            if all(r.success for r in results):
+                # Synthesize if we have LLM, else just output
+                if _llm_call:
+                    final = synthesize(goal=dag.goal, results=results, llm_call=_llm_call)
+                else:
+                    final = "\n".join(r.output for r in results)
+                print(final)
+            else:
+                # Show what we got
+                for r in results:
+                    print(r.output or r.error, file=sys.stderr)
+                sys.exit(1)
+        else:
+            # Fallback: direct LLM
+            if _llm_call:
+                response = _llm_call([{"role": "user", "content": text}], [])
+                print(response)
+        return
 
     # Interactive mode with modules
     elif args.interactive:
