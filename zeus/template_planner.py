@@ -179,13 +179,12 @@ _BUILTIN_TEMPLATES: list[DAGTemplate] = [
         description="Get cryptocurrency prices and information",
         nodes=[
             {
-                "id": "find_crypto_api",
-                "tool": "find_api",
+                "id": "crypto_price",
+                "tool": "api_call",
                 "params": {
-                    "action": "call",
-                    "query": "crypto price {query}",
-                    "no_auth": False,
-                    "https_only": True,
+                    "url": "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd",
+                    "method": "GET",
+                    "timeout": 10,
                 },
                 "depends_on": [],
             },
@@ -217,12 +216,11 @@ _BUILTIN_TEMPLATES: list[DAGTemplate] = [
         nodes=[
             {
                 "id": "get_joke",
-                "tool": "find_api",
+                "tool": "api_call",
                 "params": {
-                    "action": "call",
-                    "query": "jokes",
-                    "no_auth": True,
-                    "https_only": True,
+                    "url": "https://v2.jokeapi.dev/joke/Any?safe-mode&type=single",
+                    "method": "GET",
+                    "timeout": 10,
                 },
                 "depends_on": [],
             },
