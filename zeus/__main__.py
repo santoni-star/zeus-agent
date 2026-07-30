@@ -37,6 +37,7 @@ from zeus.modules.pipeline import PipelineModule
 from zeus.modules.reflection import ReflectionModule
 from zeus.modules.gateway import GatewayModule
 from zeus.modules.self_review import SelfReviewModule
+from zeus.modules.telemetry import TelemetryModule
 from zeus.config import ZeusConfig, show_config
 
 _llm_call = None
@@ -375,6 +376,11 @@ def main():
         if _config.module_enabled("self_review"):
             manager.register(_self_review)
 
+        # Optional TelemetryModule
+        _telemetry = TelemetryModule(bus=bus)
+        if _config.module_enabled("telemetry"):
+            manager.register(_telemetry)
+
         loop.run_until_complete(manager.start_all())
 
         print("\u2554\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2557")
@@ -496,6 +502,49 @@ def main():
                         print(f"❌ Review {parts[2]} rejected.")
                     else:
                         print("Usage: /review reject <id>")
+                    continue
+
+                # ── Telemetry / Stats commands ─────────────
+                if text == "/stats" or text == "/telemetry":
+                    s = _telemetry.stats()
+                    print(f"\n📊 Telemetry Stats")
+                    print(f"  Total events: {s['total_events']}")
+                    print(f"  Events last hour: {s['events_last_hour']}")
+                    print(f"  Active modules: {s['active_modules']}")
+                    print(f"  Avg duration (24h): {s['avg_duration_24h_ms']}ms")
+                    print()
+                    summary = _telemetry.summary(hours=24)
+                    if summary:
+                        print("  Per-module (24h):")
+                        for m in summary:
+                            bar = "█" * int(m["avg_duration_ms"] / 10) if m["avg_duration_ms"] else ""
+                            print(f"  {m['module']:>20s} │ {m['events']:>4d} ev │ {m['avg_duration_ms']:>7.1f}ms {bar}")
+                    print()
+                    continue
+                if text == "/insights":
+                    import asyncio
+                    ins = loop.run_until_complete(_telemetry.insights(refresh=True))
+                    if ins:
+                        print(f"\n💡 Architecture Insights ({len(ins)}):\n")
+                        for i, item in enumerate(ins, 1):
+                            icon = {"high": "🔴", "medium": "🟡", "low": "🟢"}.get(item["severity"], "⚪")
+                            print(f"  {icon} {item['title']}")
+                            print(f"     {item['description'][:200]}")
+                            print()
+                    else:
+                        print("✅ No insights yet. Collect more telemetry data.")
+                    continue
+                if text == "/errors":
+                    errs = _telemetry.errors(hours=48)
+                    if errs:
+                        print(f"\n⚠ Errors ({len(errs)}):\n")
+                        for e in errs:
+                            print(f"  `{e['module_name']}/{e['event_type']}`: {e['error_count']}×")
+                            if e.get("last_error"):
+                                print(f"    Last: {e['last_error'][:150]}")
+                            print()
+                    else:
+                        print("✅ No errors in last 48 hours.")
                     continue
 
                 # Process via modular EventBus

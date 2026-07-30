@@ -12,6 +12,7 @@ Available modules:
   - gateway: Telegram bridge (optional)
   - scheduler: Cron scheduling (optional)
   - self_review: Self-code review (optional)
+  - telemetry: Performance monitoring (optional)
 """
 
 from zeus.module import EventBus, Module, ModuleManager, Event
@@ -25,3 +26,4 @@ from zeus.modules.mcp import MCPModule
 from zeus.modules.gateway import GatewayModule
 from zeus.modules.scheduler import SchedulerModule
 from zeus.modules.self_review import SelfReviewModule
+from zeus.modules.telemetry import TelemetryModule

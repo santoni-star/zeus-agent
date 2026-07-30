@@ -51,6 +51,7 @@ DEFAULT_CONFIG = {
             "pipeline",
             "reflection",
             "self_review",
+            "telemetry",
             "sub_agent",
             "mcp",
         ],
