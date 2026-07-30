@@ -110,6 +110,11 @@ DEFAULT_CONFIG = {
             },
             "enabled": True,
             "timeout": 120,
+            "keywords": ["documentation", "docs", "library", "libraryId",
+                         "how to", "example", "code example", "api docs",
+                         "python requests", "npm package", "function reference",
+                         "resolve library", "query docs", "get request",
+                         "http request", "sdk", "framework"],
         },
     },
 }

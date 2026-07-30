@@ -395,28 +395,14 @@ def main():
             # Scheduler already initialized above
             pass
 
-        # Start MCP connections (async, in background)
+        # Configure MCP servers (lazy — no connect)
         mcp_servers_config = _config.get("mcp_servers", {})
         if mcp_servers_config:
-            _mcp._servers_config = {k: v for k, v in mcp_servers_config.items()
-                                    if isinstance(v, dict)}
-            # Start connections in a background thread
-            import threading
-            def _start_mcp():
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                try:
-                    loop.run_until_complete(_mcp.start())
-                    # Register MCP tools in the registry
-                    count = _mcp.register_tools(_tool_registry)
-                    if count:
-                        logger.info("MCP: registered %d tools", count)
-                finally:
-                    loop.close()
+            _mcp.set_servers_config(
+                {k: v for k, v in mcp_servers_config.items() if isinstance(v, dict)}
+            )
+            logger.info("MCP: %d server(s) configured (lazy)", len(mcp_servers_config))
 
-            mcp_thread = threading.Thread(target=_start_mcp, daemon=True)
-            mcp_thread.start()
-            logger.info("MCP: starting %d server(s) in background", len(mcp_servers_config))
         _gateway_mod = None
         enable_gateway = args.gateway or _config.get("gateway.enabled", False)
         if enable_gateway:
@@ -859,39 +845,68 @@ def main():
                 if text == "/mcp" or text == "/mcp status":
                     print(_mcp.format_status())
                     continue
-                if text.startswith("/mcp reconnect "):
-                    name = text[15:].strip()
+                if text.startswith("/mcp connect "):
+                    name = text[13:].strip()
                     if not name:
-                        print("Usage: /mcp reconnect <server_name>")
+                        print("Usage: /mcp connect <server_name>")
                         continue
                     try:
-                        import asyncio
-                        loop = asyncio.new_event_loop()
-                        success = loop.run_until_complete(_mcp.reconnect_server(name))
-                        loop.close()
-                        if success:
-                            count = _mcp.register_tools(_tool_registry)
-                            print(f"✅ Reconnected '{name}' ({count} tools registered)")
+                        import asyncio as _mcp_aio
+                        _mcp_al = _mcp_aio.new_event_loop()
+                        ok = _mcp_al.run_until_complete(_mcp.connect_server(name))
+                        _mcp_al.close()
+                        if ok:
+                            print(f"✅ Connected '{name}'")
                         else:
-                            print(f"❌ Failed to reconnect '{name}'")
+                            print(f"❌ Failed to connect '{name}'")
                     except Exception as e:
-                        print(f"❌ Reconnect failed: {e}")
+                        print(f"❌ {e}")
+                    continue
+                if text.startswith("/mcp disconnect "):
+                    name = text[16:].strip()
+                    if not name:
+                        print("Usage: /mcp disconnect <server_name>")
+                        continue
+                    try:
+                        import asyncio as _mcp_aio
+                        _mcp_al = _mcp_aio.new_event_loop()
+                        ok = _mcp_al.run_until_complete(_mcp.disconnect_server(name))
+                        _mcp_al.close()
+                        if ok:
+                            print(f"⏸ Disconnected '{name}'")
+                        else:
+                            print(f"⚠ Server '{name}' not found")
+                    except Exception as e:
+                        print(f"❌ {e}")
+                    continue
+                if text == "/mcp auto on":
+                    _mcp.set_hot_mode(True)
+                    print("✅ MCP hot mode ON — connects on demand")
+                    continue
+                if text == "/mcp auto off":
+                    _mcp.set_hot_mode(False)
+                    print("⏸ MCP hot mode OFF — manual only")
                     continue
                 if text == "/mcp list":
-                    statuses = _mcp.get_status()
-                    if not statuses:
-                        print("📡 No MCP servers configured.")
-                    else:
-                        print(f"\n📡 MCP Servers:\n")
-                        for s in statuses:
-                            tools = s.get("tools", 0)
-                            tools_str = f" ({tools} tools)" if tools else ""
-                            icon = "✅" if s.get("connected") else "❌"
-                            err = f" — {s['error']}" if s.get("error") else ""
-                            print(f"  {icon} {s['name']}{tools_str}{err}")
-                        total = sum(s.get("tools", 0) for s in statuses)
-                        print(f"\n  Total: {total} tools across {len(statuses)} servers")
+                    print(_mcp.format_status())
                     continue
+
+                # ── MCP hot connect: check if query needs MCP tools ──
+                _mcp_needs_disconnect = False
+                if not text.startswith("/"):
+                    # Non-command: check if MCP tools are relevant
+                    try:
+                        import asyncio as _mcp_asyncio
+                        _mcp_loop = _mcp_asyncio.new_event_loop()
+                        connected = _mcp_loop.run_until_complete(
+                            _mcp.connect_if_needed(text)
+                        )
+                        _mcp_loop.close()
+                        if connected:
+                            _mcp_needs_disconnect = True
+                            logger.info("MCP hot: connected %s for query", connected)
+                    except Exception as _mcp_e:
+                        logger.debug("MCP hot connect: %s", _mcp_e)
 
                 # ── Save to conversation history ──────────
                 _history.add("user", text)
@@ -921,13 +936,38 @@ def main():
                         break
                     loop.run_until_complete(asyncio.sleep(0.1))
 
+                # MCP hot disconnect: clean up after query completes
+                if _mcp_needs_disconnect:
+                    try:
+                        _mcp_dc_loop = asyncio.new_event_loop()
+                        _mcp_dc_loop.run_until_complete(_mcp.disconnect_idle())
+                        _mcp_dc_loop.close()
+                        _mcp_needs_disconnect = False
+                    except Exception:
+                        pass
+
             except KeyboardInterrupt:
+                # MCP cleanup
+                if _mcp_needs_disconnect:
+                    try:
+                        _mcp_dc_loop = asyncio.new_event_loop()
+                        _mcp_dc_loop.run_until_complete(_mcp.disconnect_idle())
+                        _mcp_dc_loop.close()
+                    except Exception:
+                        pass
                 print()
                 break
             except EOFError:
+                if _mcp_needs_disconnect:
+                    try:
+                        _mcp_dc_loop = asyncio.new_event_loop()
+                        _mcp_dc_loop.run_until_complete(_mcp.disconnect_idle())
+                        _mcp_dc_loop.close()
+                    except Exception:
+                        pass
                 break
             except Exception as e:
-                print(f"\u26a0 Error: {e}")
+                print(f"⚠ Error: {e}")
                 import traceback
                 traceback.print_exc()
 
