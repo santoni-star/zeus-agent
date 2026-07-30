@@ -38,7 +38,72 @@ class ToolRegistry:
         registry.discover()  # auto-load built-in tools
         registry.register("my_tool", schema, execute_fn)
         result = registry.call("web_search", {"query": "python"})
+
+    Features:
+      - Tool categories + tags for filtering
+      - suggest(query) → relevant tools ranked by relevance
+      - schemas(filter=query) → filtered schemas (less context noise)
+      - Cross-reference: tools know related tools
     """
+
+    # Built-in tool metadata: category, tags, related_tools
+    _TOOL_META = {
+        "web_search": {
+            "category": "web",
+            "tags": ["search", "web", "news", "information", "internet"],
+            "related": ["web_fetch", "api_call"],
+        },
+        "web_fetch": {
+            "category": "web",
+            "tags": ["web", "fetch", "scrape", "url", "page", "html"],
+            "related": ["web_search", "api_call"],
+        },
+        "api_call": {
+            "category": "web",
+            "tags": ["api", "rest", "http", "request", "json", "post", "get"],
+            "related": ["web_fetch", "web_search"],
+        },
+        "image": {
+            "category": "media",
+            "tags": ["image", "photo", "picture", "exif", "meta", "convert", "resize", "jpg", "png"],
+            "related": ["file", "utility"],
+        },
+        "file": {
+            "category": "fs",
+            "tags": ["file", "read", "write", "path", "filesystem"],
+            "related": ["search_files", "terminal"],
+        },
+        "search_files": {
+            "category": "fs",
+            "tags": ["file", "search", "grep", "find", "code", "filesystem"],
+            "related": ["file", "terminal"],
+        },
+        "terminal": {
+            "category": "shell",
+            "tags": ["shell", "command", "bash", "exec", "git", "process"],
+            "related": ["code_exec", "file", "search_files"],
+        },
+        "code_exec": {
+            "category": "code",
+            "tags": ["code", "python", "script", "eval", "execute"],
+            "related": ["terminal", "file", "search_files"],
+        },
+        "session_search": {
+            "category": "memory",
+            "tags": ["session", "history", "search", "past", "conversation", "fts5"],
+            "related": ["utility"],
+        },
+        "structured_file": {
+            "category": "fs",
+            "tags": ["edit", "patch", "replace", "find", "sed", "file"],
+            "related": ["file", "search_files", "terminal"],
+        },
+        "utility": {
+            "category": "system",
+            "tags": ["calc", "math", "timestamp", "uuid", "json", "help"],
+            "related": [],
+        },
+    }
 
     def __init__(self):
         self._tools: dict[str, dict] = {}
@@ -200,15 +265,139 @@ class ToolRegistry:
         tools = []
         for name, tool in sorted(self._tools.items()):
             schema = tool["schema"]
+            meta = self._TOOL_META.get(name, {})
             desc = schema.get("description", "")
-            if category and category.lower() not in desc.lower() and category.lower() not in name:
+            cat = meta.get("category", "")
+            if category and category.lower() not in desc.lower() and category.lower() not in name and category.lower() != cat:
                 continue
             tools.append({
                 "name": name,
                 "description": desc[:100],
                 "params": list(schema.get("parameters", {}).get("properties", {}).keys()),
+                "category": cat,
+                "tags": meta.get("tags", []),
+                "related": meta.get("related", []),
             })
         return tools
+
+    def suggest(self, query: str) -> list[str]:
+        """Suggest tools relevant to a user query.
+
+        Analyzes the query against tool tags, descriptions, and categories.
+        Returns tools ranked by relevance, from most to least.
+
+        Args:
+            query: User's natural language query.
+
+        Returns:
+            List of tool names ordered by relevance.
+        """
+        if not query:
+            return self.tool_names
+
+        q = query.lower()
+        stopwords = {"the", "a", "an", "is", "are", "was", "were", "to", "of",
+                     "in", "for", "on", "at", "by", "with", "from", "and",
+                     "or", "not", "but", "how", "what", "why", "when", "where",
+                     "who", "can", "you", "i", "we", "they", "it", "do", "does",
+                     "did", "this", "that", "these", "those", "please", "help",
+                     "need", "want", "tell", "show", "get", "find", "make", "use"}
+        keywords = {w for w in q.split() if len(w) > 2 and w not in stopwords}
+
+        if not keywords:
+            return self.tool_names
+
+        scored: list[tuple[float, str]] = []
+
+        for name in self._tools:
+            meta = self._TOOL_META.get(name, {})
+            schema = self._tools[name].get("schema", {})
+            desc = schema.get("description", "").lower()
+
+            score = 0.0
+
+            # Score by tag overlap (strongest signal)
+            tags = meta.get("tags", [])
+            for tag in tags:
+                if tag in q:
+                    score += 3.0
+                if tag in keywords:
+                    score += 2.0
+
+            # Score by keyword overlap with description
+            for kw in keywords:
+                if kw in desc:
+                    score += 1.5
+                if kw in name:
+                    score += 2.0
+
+            # Score by category match
+            cat = meta.get("category", "")
+            if cat and cat in q:
+                score += 2.0
+
+            # Score by related tool references in query
+            for rel in meta.get("related", []):
+                if rel in keywords or rel in q:
+                    score += 1.0
+
+            scored.append((score, name))
+
+        scored.sort(key=lambda x: (-x[0], x[1]))
+
+        # Return only relevant tools or all if none match
+        relevant = [name for score, name in scored if score > 0]
+        return relevant if relevant else self.tool_names
+
+    def schemas(self, filter_query: str | None = None) -> list[dict]:
+        """Get schemas for all tools, optionally filtered by relevance.
+
+        Args:
+            filter_query: If set, only return schemas for tools relevant to this query.
+                          This reduces token overhead when sending tools to the LLM.
+
+        Returns:
+            List of tool schemas.
+        """
+        if not filter_query:
+            return [self._tools[n]["schema"] for n in self.tool_names]
+
+        relevant = self.suggest(filter_query)
+        return [self._tools[n]["schema"] for n in relevant if n in self._tools]
+
+    def names(self) -> list[str]:
+        """Get all registered tool names."""
+        return sorted(self._tools.keys())
+
+    def get_meta(self, name: str) -> dict:
+        """Get metadata for a tool (category, tags, related)."""
+        return self._TOOL_META.get(name, {
+            "category": "uncategorized",
+            "tags": [],
+            "related": [],
+        })
+
+    def get_related(self, name: str) -> list[str]:
+        """Get related tools for a tool name.
+
+        Cross-references: returns tools that work well together.
+
+        Args:
+            name: Tool name
+
+        Returns:
+            List of related tool names.
+        """
+        meta = self._TOOL_META.get(name, {})
+        related = list(meta.get("related", []))
+
+        # Also find tools that reference THIS tool
+        for other_name, other_meta in self._TOOL_META.items():
+            if name in other_meta.get("related", []):
+                if other_name not in related and other_name != name:
+                    related.append(other_name)
+
+        return related
 
     def get_schema(self, name: str) -> dict | None:
         """Get the schema for a tool."""

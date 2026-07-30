@@ -134,8 +134,8 @@ def _handle_complex_task(text: str, tool_registry, llm_call) -> ExecutionResult:
 
     start = time.time()
 
-    # 1. Planner: generate Task DAG
-    tools_schemas = tool_registry.schemas() if tool_registry else []
+    # 1. Planner: generate Task DAG (filter tools by query relevance)
+    tools_schemas = tool_registry.schemas(filter_query=text) if tool_registry else []
     dag = plan(text=text, tools=tools_schemas, llm_call=llm_call)
 
     if not dag:
