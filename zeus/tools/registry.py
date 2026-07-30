@@ -103,6 +103,12 @@ class ToolRegistry:
             "tags": ["calc", "math", "timestamp", "uuid", "json", "help"],
             "related": [],
         },
+        "find_api": {
+            "category": "web",
+            "tags": ["api", "find", "public", "search", "discover", "endpoint",
+                     "rest", "dataset", "free api"],
+            "related": ["api_call", "web_search", "web_fetch"],
+        },
     }
 
     def __init__(self):
