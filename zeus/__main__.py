@@ -31,6 +31,7 @@ from zeus.tools.dynamic import (
 # Modular imports
 from zeus.module import EventBus, ModuleManager, Event, USER_INPUT, USER_OUTPUT
 from zeus.memory.history import ConversationBuffer, HistorySearcher, search_history
+from zeus.memory.profile import UserProfile, FactStore
 from zeus.modules.classifier import ClassifierModule
 from zeus.modules.memory import MemoryModule
 from zeus.modules.router import RouterModule
@@ -350,6 +351,8 @@ def main():
         # Shared conversation history buffer
         _history = ConversationBuffer(max_turns=20)
         _searcher = HistorySearcher()
+        _profile = UserProfile()
+        _facts = FactStore()
 
         manager = ModuleManager(bus=bus)
         manager.register(ClassifierModule(bus=bus))
@@ -580,7 +583,51 @@ def main():
                     print("Usage: /search <query>")
                     print("  Example: /search що ми вчора робили")
                     print("  Example: /search github обговорення")
+                    print("  Example: /search self-review пропозиції")
                     continue
+
+                # ── Profile / Memory commands ──────────────
+                if text == "/profile":
+                    p = _profile.to_dict()
+                    if p:
+                        print(f"\n👤 User profile:")
+                        for key, value in sorted(p.items()):
+                            print(f"  {key}: {value}")
+                    else:
+                        print("👤 Profile empty. Facts will be auto-collected.")
+                    continue
+                if text.startswith("/remember "):
+                    content = text[10:].strip()
+                    if content:
+                        _facts.add(content, entity="user", category="user_pref", trust=0.7, source="manual")
+                        _profile.update_from_text(content, source="manual")
+                        print(f"✅ Remembered: {content[:100]}")
+                    else:
+                        print("Usage: /remember <fact to remember>")
+                    continue
+                if text.startswith("/forget "):
+                    query = text[8:].strip()
+                    results = _facts.search(query)
+                    if results:
+                        for r in results[:3]:
+                            _facts.add(r["content"], entity=r["entity"],
+                                       category=r["category"], trust=0.0, source="correction")
+                        print(f"✅ Forgotten: {query}")
+                    else:
+                        print(f"No facts match '{query}'")
+                    continue
+                if text == "/facts":
+                    facts = _facts.search("", min_trust=0.3, limit=20)
+                    if facts:
+                        print(f"\n📚 Stored facts ({len(facts)}):\n")
+                        for f in facts:
+                            icon = {"user_pref": "👤", "project": "📦", "tool": "🔧", "general": "📝"}.get(f["category"], "•")
+                            trust_str = f" (trust: {f['trust']:.1f})"
+                            print(f"  {icon} {f['content'][:120]}{trust_str}")
+                    else:
+                        print("📚 No stored facts. Use /remember to add some.")
+                    continue
+
 
                 # Save to conversation history
                 _history.add("user", text)
