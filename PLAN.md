@@ -47,10 +47,15 @@
 
 ## P5. Self-Evolution
 
-### P5.1 ✦ Self-code review
-- [ ] Zeus читає свій код, аналізує неефективності
-- [ ] Пропонує патчі (користувач апрувить)
-- [ ] Використовує dynamic tools для рефакторингу
+### P5.1 ✦ Self-code review (DONE)
+- [x] SelfReviewModule — EventBus модуль для аналізу коду
+- [x] Евристичний сканер: довгі функції, bare except, глибока вкладеність, sync/async
+- [x] LLM сканер (якщо модель підтримує великі промпти)
+- [x] ReviewStore (SQLite) для збереження пропозицій
+- [x] User-in-the-loop: scan → list → show → approve/reject
+- [x] CLI: /review scan, /review list, /review show, /review approve, /review reject
+- [x] Авто-скан кожні 10 задач
+- [x] Код не змінюється без апруву користувача
 
 ### P5.2 ✦ Architecture evolution
 - [ ] Відстежує які модулі навантажені найбільше
