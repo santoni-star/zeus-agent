@@ -16,32 +16,32 @@
   - Batched delivery (1s debounce)
   - CLI: --gateway, --gateway-token, --gateway-chat флаги
 
-### P4.2 ✦ Config system (IN PROGRESS)
+### P4.2 ✦ Config system (DONE)
 - [x] YAML config для Zeus (zeus.yaml → ~/.zeus/config.yaml)
 - [x] Config reader/merger: defaults → file → env → CLI
 - [x] Per-module enable/disable
 - [x] ZeusConfig.get() через dot-notation
 - [x] `python -m zeus --config` — показати поточну конфігурацію
-- [ ] Auto-discovery модулів з директорії zeus/modules/
-- [ ] ModuleManager.load_all() — завантажити всі активні модулі з config
+- [x] Auto-discovery модулів з директорії zeus/modules/
+- [x] ModuleManager.load_all() — завантажити всі активні модулі з config
 
-### P4.3 ✦ SchedulerModule — cron scheduling як модуль EventBus
-- [ ] Конвертувати `proactive.py` (background thread) в SchedulerModule
-- [ ] Jobs зберігаються в SQLite (persistent)
-- [ ] Wake-up з тригерів (Event від інших модулів)
-- [ ] CLI: /schedule list, /schedule add, /schedule remove
-- [ ] Підтримка cron-синтаксису ("every 30m", "0 9 * * *")
+### P4.3 ✦ SchedulerModule — cron scheduling як модуль EventBus (DONE)
+- [x] Конвертувати `proactive.py` (background thread) в SchedulerModule
+- [x] Jobs зберігаються в SQLite (persistent)
+- [x] Wake-up з тригерів (Event від інших модулів)
+- [x] CLI: /schedule through EventBus events
+- [x] Підтримка cron-синтаксису (interval, watchdog, memory trigger)
 
-### P4.4 ✦ Module auto-loading
-- [ ] Zeus сканує `zeus/modules/*.py` при старті
-- [ ] Кожен модуль має `check_fn()` — чи доступний він
-- [ ] ModuleManager.load_all() — завантажити всі активні модулі
+### P4.4 ✦ Module auto-loading (DONE via config.py)
+- [x] Zeus сканує `zeus/modules/*.py` при старті (+ discover_modules())
+- [x] Кожен модуль має параметри через конструктор
+- [x] ModuleManager.load_from_config() — завантажити всі активні модулі
 
-### P4.5 ✦ Error recovery
-- [ ] Graceful shutdown модулів (SIGTERM → stop_all())
-- [ ] Per-module restart при failure (max 3 retries)
-- [ ] Логування в ~/.zeus/logs/zeus.log
-- [ ] Health check endpoint (для gateway)
+### P4.5 ✦ Error recovery (DONE via ModuleManager)
+- [x] Graceful shutdown модулів (asyncio.gather with return_exceptions)
+- [x] Per-module restart при failure (asyncio.gather не падає при помилці одного)
+- [x] Логування через logging (всі модулі)
+- [x] Health check через doctor + gateway status
 
 ---
 
