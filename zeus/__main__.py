@@ -32,6 +32,7 @@ from zeus.tools.dynamic import (
 from zeus.module import EventBus, ModuleManager, Event, USER_INPUT, USER_OUTPUT
 from zeus.memory.history import ConversationBuffer, HistorySearcher, search_history
 from zeus.memory.profile import UserProfile, FactStore
+from zeus.skills import SkillManager, get_skill_manager
 from zeus.modules.classifier import ClassifierModule
 from zeus.modules.memory import MemoryModule
 from zeus.modules.router import RouterModule
@@ -353,6 +354,7 @@ def main():
         _searcher = HistorySearcher()
         _profile = UserProfile()
         _facts = FactStore()
+        _skills = get_skill_manager()
 
         manager = ModuleManager(bus=bus)
         manager.register(ClassifierModule(bus=bus))
@@ -626,6 +628,54 @@ def main():
                             print(f"  {icon} {f['content'][:120]}{trust_str}")
                     else:
                         print("📚 No stored facts. Use /remember to add some.")
+                    continue
+
+                # ── Skills commands ────────────────────────
+                if text == "/skills" or text == "/skill list":
+                    skills = _skills.list_skills()
+                    if skills:
+                        print(f"\n📚 Skills ({len(skills)}):\n")
+                        for s in skills:
+                            tags = f" [{', '.join(s['tags'][:3])}]" if s['tags'] else ""
+                            print(f"  • {s['name']}: {s['description'][:80]}{tags}")
+                    else:
+                        print("📚 No skills available.")
+                    continue
+                if text.startswith("/skill show "):
+                    name = text[12:].strip()
+                    skill = _skills.get(name)
+                    if skill:
+                        print()
+                        print(skill.format())
+                    else:
+                        print(f"❌ Skill not found: {name}")
+                        similar = _skills.find(name)
+                        if similar:
+                            print(f"   Did you mean: {', '.join(s.name for s in similar)}")
+                    continue
+                if text.startswith("/skill create "):
+                    # Usage: /skill create name: Description
+                    rest = text[14:].strip()
+                    if ":" not in rest:
+                        print("Usage: /skill create <name>: <description>")
+                        print("  Example: /skill create tdd: Run tests before writing code")
+                        continue
+                    name, _, desc = rest.partition(":")
+                    name = name.strip().lower().replace(" ", "-")
+                    desc = desc.strip()
+                    path = _skills.create(name, desc, steps=["See body for details"])
+                    print(f"✅ Skill created: {path}")
+                    print("   Edit the file to add steps, commands, and pitfalls.")
+                    continue
+                if text.startswith("/do "):
+                    name = text[4:].strip()
+                    skill = _skills.get(name)
+                    if skill:
+                        print(f"\n📋 Running skill: {skill.name}")
+                        print(f"   {skill.description}\n")
+                        print(skill.to_prompt())
+                    else:
+                        print(f"❌ Skill not found: {name}")
                     continue
 
 
