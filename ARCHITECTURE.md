@@ -1,196 +1,209 @@
 # Zeus Agent — Architecture
 
-## High-Level Design
+## Core Principle: Stream Processor + Task Runtime
 
-Zeus is a **layered agent architecture** where each layer has a distinct responsibility and can evolve independently.
+Zeus replaces the traditional **agent loop** (LLM → tool → LLM → tool → ...) with a **two-tier pipeline** that separates reasoning from execution.
 
-```
-┌─────────────────────────────────────────────────────┐
-│                   USER INTERFACE                     │
-│  (CLI / Gateway / API / Webhook / IDE Plugin)       │
-└─────────────────────┬───────────────────────────────┘
-                      │
-┌─────────────────────▼───────────────────────────────┐
-│  L1 — ORCHESTRATOR (Meta-Cognitive Layer)           │
-│  • Receives goal → decomposes into plan             │
-│  • Maintains the task DAG (not linear list)         │
-│  • Decides WHO executes WHAT and WHEN               │
-│  • Self-reflects: "how did that go? improve it."    │
-│  • Spawns and monitors sub-agents                   │
-└─────────────────────┬───────────────────────────────┘
-                      │
-┌─────────────────────▼───────────────────────────────┐
-│  L2 — EXECUTOR (Agent Loop)                         │
-│  • Standard tool-calling loop                       │
-│  • Dynamic tool composition (create tools on fly)   │
-│  • Adaptive context management                      │
-│  • Error recovery with fallback strategies          │
-│  • Multi-step reasoning with checkpoint/rollback    │
-└─────────────────────┬───────────────────────────────┘
-                      │
-┌─────────────────────▼───────────────────────────────┐
-│  L3 — TOOL SYSTEM                                   │
-│  • Static tools (built-in: terminal, file, web)     │
-│  • Dynamic tools (generated per-task)               │
-│  • MCP servers (external capability)                │
-│  • Plugin system (user extensions)                  │
-│  • Sandboxing & security gates                      │
-└─────────────────────┬───────────────────────────────┘
-                      │
-┌─────────────────────▼───────────────────────────────┐
-│  L4 — MEMORY & LEARNING                             │
-│  • Episodic memory (session history, compressed)     │
-│  • Semantic memory (vector DB, fact store)           │
-│  • Procedural memory (skills that self-improve)      │
-│  • Predictive context (what will I need next?)       │
-│  • Cross-session behavioral learning                 │
-└─────────────────────────────────────────────────────┘
-```
-
-## Core Innovation: The Zeus Loop
-
-### Phase 1: Meta-Cognition (Orchestrator)
-
-Instead of jumping straight into execution, Zeus pauses to think:
+The key insight: **half the steps in an agent loop don't need an LLM**. Zeus calls the LLM only when reasoning is required — everything else is deterministic code.
 
 ```
-1. ANALYZE   — What is the user really asking? What's the goal behind the words?
-2. DECOMPOSE — Break the goal into a DAG of sub-tasks (not a linear list)
-3. PLAN      — For each sub-task: which tools? which models? success criteria?
-4. PRIORITIZE— What must happen first? What can run in parallel?
-5. METRIZE   — How will I know I succeeded?
+┌──────────────────────────────────────────────────────────────┐
+│                    USER INPUT                                 │
+│  "знайди останню версію python, завантаж, встанови"         │
+└────────────────────────┬─────────────────────────────────────┘
+                         │
+┌────────────────────────▼─────────────────────────────────────┐
+│  L1 — STREAM PROCESSOR  (мінімум LLM)                       │
+│                                                              │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────────┐   │
+│  │ Classifier   │  │ Router       │  │ Queue            │   │
+│  │ (LLM fast)   │  │ (code)       │  │ (code)           │   │
+│  │ маленька     │  │ match/case   │  │ priority + dedup │   │
+│  │ модель       │  │ на типі      │  │                  │   │
+│  └──────┬───────┘  └──────┬───────┘  └────────┬─────────┘   │
+│         │                 │                    │              │
+│  ┌──────▼─────────────────▼────────────────────▼──────────┐  │
+│  │  "це складна задача" → L2                              │  │
+│  │  "просте питання"    → Direct LLM reply                │  │
+│  │  "команда"           → TerminalExec                    │  │
+│  │  "пошук скіла"       → SkillsClient                    │  │
+│  └────────────────────────────────────────────────────────┘  │
+│                                                              │
+│  LLM викликів: 1 (маленька модель, 1B-3B параметрів)       │
+└────────────────────────┬─────────────────────────────────────┘
+                         │
+┌────────────────────────▼─────────────────────────────────────┐
+│  L2 — TASK RUNTIME (для складних задач)                     │
+│                                                              │
+│  ┌────────────────────────────────────────────────────────┐  │
+│  │  1. Planner (LLM, 1 виклик)                            │  │
+│  │     • Отримує: запит + список доступних інструментів   │  │
+│  │     • Повертає: Task DAG (JSON)                        │  │
+│  │     • DAG = граф залежностей з нодами:                 │  │
+│  │       - tool: виклик інструмента                       │  │
+│  │       - llm:  виклик LLM для підзадачі                 │  │
+│  │       - wait: очікування батьківських нод              │  │
+│  │       - merge: об'єднання результатів                   │  │
+│  └────────────────────────────────────────────────────────┘  │
+│                              │                                │
+│  ┌────────────────────────────────────────────────────────┐  │
+│  │  2. DAG Executor (код, 0 LLM)                          │  │
+│  │     • Топологічний обхід графа                         │  │
+│  │     • Паралельне виконання незалежних нод              │  │
+│  │     • Retry + timeout на кожну ноду                    │  │
+│  │     • Прогрес-репортинг                                │  │
+│  └────────────────────────────────────────────────────────┘  │
+│                              │                                │
+│  ┌────────────────────────────────────────────────────────┐  │
+│  │  3. Synthesizer (LLM, 1 виклик)                        │  │
+│  │     • Отримує: всі результати DAG                      │  │
+│  │     • Повертає: відповідь користувачу                  │  │
+│  └────────────────────────────────────────────────────────┘  │
+│                                                              │
+│  LLM викликів: 2 (Planner + Synthesizer)                    │
+│  + 1 (Error recovery, тільки якщо щось впало)              │
+└────────────────────────┬─────────────────────────────────────┘
+                         │
+┌────────────────────────▼─────────────────────────────────────┐
+│  L0 — PROACTIVE ENGINE  (фоновий, завжди працює)            │
+│                                                              │
+│  • Watchdogs (моніторинг: диск, мережа, залежності)         │
+│  • Triggers (події: git push, session_end, error)           │
+│  • Decision Engine (чи варто турбувати користувача?)         │
+│  • Action Queue (відкладена доставка повідомлень)            │
+│                                                              │
+│  Phase 2+. В Phase 0 тільки закладаємо інтерфейси.          │
+└──────────────────────────────────────────────────────────────┘
 ```
 
-This produces a **Task DAG** — a directed acyclic graph where:
-- Nodes = sub-tasks with clear success criteria
-- Edges = dependencies ("B depends on A")
-- Metadata = assigned tools, expected output format, fallback plan
+## Реальна кількість LLM викликів
 
-### Phase 2: Execution (Agent Loop)
+| Компонент | LLM? | Модель | Викликів на задачу |
+|-----------|------|--------|--------------------|
+| Classifier | Так | Маленька (1B-3B) | 1 |
+| Router | Ні | Код | 0 |
+| Queue | Ні | Код | 0 |
+| Planner | Так | Головна | 1 |
+| DAG Executor | Ні | Код | 0 |
+| Error Recovery | Так | Головна | 1 (тільки при помилці) |
+| Synthesizer | Так | Головна | 1 |
 
-Task-by-task traversal of the DAG with:
-- **Dynamic tools** — if a task needs "parse all API docs in this repo", Zeus generates a custom tool on the fly
-- **Adaptive context** — only the relevant sub-DAG is in context; the rest lives in vector storage until needed
-- **Checkpointing** — every N steps saves state; rollback on failure instead of compounding errors
-- **Parallel execution** — sibling tasks in the DAG run concurrently via sub-agents
+**Типова задача:** 2-3 LLM виклики (1 дешевий + 1-2 дорогих)
+**Звичайний agent loop:** 10-50 LLM викликів
 
-### Phase 3: Reflection (Meta-Cognition, again)
+## Task DAG — формат
 
-After the DAG is complete:
-
-```
-1. REVIEW    — Did the final output meet the success criteria?
-2. TRACE     — Where did it go well? Where did it waste time?
-3. LEARN     — Extract a reusable pattern → save as a skill
-4. OPTIMIZE  — Update the planner's model of what works for this user/task type
-5. REPORT    — Tell the user: what was done, how, and what Zeus learned
-```
-
-This is the **self-improvement engine**. Every task makes Zeus better at the next one.
-
-## Key Architectural Decisions
-
-### 1. Task DAG over Linear Lists
-
-Most agents maintain a linear to-do list. Zeus uses a DAG. Why?
-
-| Aspect | Linear List | Task DAG |
-|--------|-------------|----------|
-| Parallelism | Impossible to detect | Explicit sibling edges |
-| Failure handling | Re-plan everything | Re-plan only the failed sub-tree |
-| Context cost | Full plan always in context | Only active sub-tree |
-| Resumption | Start from top | Resume any unfinished node |
-
-### 2. Dynamic Tool Generation
-
-Zeus can create new tools at runtime:
-
-```python
-# Zeus detects: "I need to parse all markdown files in this repo"
-# It generates:
-tool = create_tool(
-    name="parse_markdown_files",
-    description="Recursively find and parse markdown files",
-    parameters={
-        "root_dir": {"type": "string"},
-        "pattern": {"type": "string", "default": "**/*.md"}
+```json
+{
+  "goal": "Знайди останню версію Python, завантаж і встанови",
+  "nodes": [
+    {
+      "id": "search_version",
+      "type": "tool",
+      "tool": "web_search",
+      "params": {"query": "latest python version download"},
+      "success_criteria": "отримано URL з python.org",
+      "retry": 3
     },
-    implementation="""# auto-generated by Zeus
-import glob
-for f in glob.glob(root_dir + '/' + pattern, recursive=True):
-    yield parse_markdown(f)
-"""
-)
-register_tool(tool)
+    {
+      "id": "download",
+      "type": "tool",
+      "tool": "terminal",
+      "params": {"command": "curl -Lo python.tar.gz {{nodes.search_version.result}}"},
+      "depends_on": ["search_version"],
+      "success_criteria": "файл завантажено",
+      "retry": 2
+    },
+    {
+      "id": "install",
+      "type": "tool",
+      "tool": "terminal",
+      "params": {"command": "tar -xzf python.tar.gz && cd python-* && ./configure && make"},
+      "depends_on": ["download"],
+      "timeout": 300,
+      "success_criteria": "python --version працює"
+    },
+    {
+      "id": "verify",
+      "type": "tool",
+      "tool": "terminal",
+      "params": {"command": "python3 --version"},
+      "depends_on": ["install"]
+    }
+  ]
+}
 ```
 
-Tools are cached in procedural memory and re-used when similar patterns appear.
-
-### 3. Adaptive Context Management
-
-Instead of waiting until the context is full and compressing reactively (like every framework today), Zeus:
-
-1. **Predicts** context needs for the next N steps from the task DAG
-2. **Prunes** anything outside the current sub-tree
-3. **Compresses** only what's between DAG nodes (transition state, not active state)
-4. **Streams** large outputs directly to storage, not context
-
-### 4. Recursive Skill Improvement
-
-Skills in Zeus are **mutable and self-improving**:
-
-- After every task, Zeus asks: "Did I use a skill? Was it correct? Was it complete?"
-- If a skill was wrong or incomplete → **patch it immediately**
-- If a task was done without a skill but had a clear pattern → **create a new skill**
-- If a skill was used correctly → **bump its trust score**
-
-This is curator 2.0 — not just cleanup, but active improvement.
-
-### 5. Hybrid Memory Architecture
+## Шари пам'яті (оновлено)
 
 ```
-┌──────────────────────────────────────────────────────┐
-│                 QUERY LAYER                           │
-│  "What do I need right now?"                          │
-├──────────────────────────────────────────────────────┤
-│                                                        │
-│  ┌────────────────┐  ┌──────────────────┐             │
-│  │ Short-term      │  │ Working Memory    │            │
-│  │ (current DAG)   │  │ (last 3 turns)    │            │
-│  └───────┬────────┘  └────────┬─────────┘             │
-│          │                    │                        │
-│  ┌───────▼────────────────────▼─────────┐              │
-│  │       Fusion Layer                    │              │
-│  │  (compresses, dedupes, prioritizes)   │              │
-│  └───────┬───────────────────────────────┘              │
-│          │                                              │
-│  ┌───────▼────────┐  ┌──────────────────┐              │
-│  │ Episodic        │  │ Semantic          │             │
-│  │ (sessions DB)   │  │ (vector store)    │             │
-│  └────────────────┘  └──────────────────┘              │
-│                                                        │
-│  ┌─────────────────────────────────────┐               │
-│  │ Procedural (skills, tools, patterns) │              │
-│  └─────────────────────────────────────┘               │
-└──────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│                 RETRIEVAL ORCHESTRATOR                       │
+│  "What does Zeus need RIGHT NOW?"                            │
+│  Fusion з кількох шарів                                      │
+├─────────────────────────────────────────────────────────────┤
+│                                                               │
+│  ┌─────────────────┐  ┌─────────────────┐                    │
+│  │ L1: WORKING      │  │ L2: EPISODIC    │                    │
+│  │ (in-context)     │  │ (structured)    │                    │
+│  │ • Поточний DAG   │  │ • goal, outcome │                    │
+│  │ • Останні ходи   │  │ • key decisions │                    │
+│  │                  │  │ • corrections   │                    │
+│  │                  │  │ ✖ tool output   │                    │
+│  └─────────────────┘  └─────────────────┘                    │
+│                                                               │
+│  ┌─────────────────┐  ┌─────────────────┐                    │
+│  │ L3: SEMANTIC    │  │ L4: RAW ARCHIVE  │                    │
+│  │ (knowledge)     │  │ (gzip, no index) │                    │
+│  │ • user prefs    │  │ • повна історія  │                    │
+│  │ • environment   │  │ • для trace only │                    │
+│  │ • projects      │  │                  │                    │
+│  │ • trust scores  │  │                  │                    │
+│  └─────────────────┘  └─────────────────┘                    │
+│                                                               │
+│  Memory Extractor (LLM, 1 виклик після сесії):               │
+│  бере сиру сесію → витягує goal, decisions, corrections,    │
+│  outcome → зберігає в L2, витягує факти → зберігає в L3    │
+│                                                               │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-## Model Agnosticism
+## Phase 0 архітектура (зараз)
 
-Zeus doesn't care about the model. It adapts:
+Мінімально працездатний продукт:
 
-- **Strong models** (Claude, GPT-4) → full meta-cognition, complex DAGs, deep reflection
-- **Weak models** (local 1B-7B) → simplified planner, shorter DAGs, fewer tools per node
-- **Self-detection** → Zeus benchmarks itself on first run and tunes complexity automatically
+```
+zeus/
+├── __init__.py
+├── classifier.py     # Intent classification (tiny LLM or keyword)
+├── router.py         # Route request to handler
+├── planner.py        # LLM call → Task DAG JSON
+├── runtime.py        # DAG executor (no LLM)
+├── synthesizer.py    # LLM call → final response
+├── tools/
+│   ├── __init__.py
+│   ├── terminal.py   # Shell command execution
+│   ├── file.py       # File read/write/search
+│   └── web.py        # Web search (DuckDuckGo)
+├── memory/
+│   ├── __init__.py
+│   ├── episodic.py   # Structured session store
+│   └── semantic.py   # Fact store
+├── models/
+│   ├── __init__.py
+│   ├── dag.py        # Task DAG data model
+│   └── types.py      # Shared types
+└── cli.py            # Entry point
+```
 
-## Security Model
+## Філософія Zeus
 
-- **Tiered approval**: `auto` | `notify` | `confirm` | `block`
-- Dynamic per-tool, per-action permissions
-- Sandboxed execution via Firecracker / Docker / local
-- All generated code is auto-reviewed before execution
-- Secret redaction at every output boundary (not just system prompt)
+1. **LLM — це ресурс, не контролер.** Не кожен крок потребує мислення.
+2. **Планування — це інвестиція.** Один хороший план дешевший за 50 спроб.
+3. **Помилки ізольовані.** Впала одна нода DAG — перезапускаємо тільки її.
+4. **Пам'ять — це структура, не сховище.** Якість > кількість.
+5. **Проактивність — це повага.** Не турбувати без потреби.
 
 ---
 
-*Архітектура відкрита до змін. Критика вітається.*
+*Архітектура жива. Змінюється з досвідом.*
