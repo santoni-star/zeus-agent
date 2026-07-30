@@ -79,6 +79,17 @@ DEFAULT_CONFIG = {
         "max_size_mb": 10,
         "backup_count": 3,
     },
+    "sync": {
+        "enabled": False,
+        "repo": "github.com/santoni-star/zeus-agent",
+        "token_env": "GITHUB_TOKEN",
+        "auto_commit": True,
+        "auto_push": True,
+        "include_data": True,
+        "include_config": True,
+        "branch": "agent-state",
+        "interval_minutes": 60,
+    },
 }
 
 

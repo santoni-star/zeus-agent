@@ -33,6 +33,7 @@ from zeus.module import EventBus, ModuleManager, Event, USER_INPUT, USER_OUTPUT
 from zeus.memory.history import ConversationBuffer, HistorySearcher, search_history
 from zeus.memory.profile import UserProfile, FactStore
 from zeus.skills import SkillManager, get_skill_manager
+from zeus.sync import GitSync, get_sync, auto_sync
 from zeus.modules.classifier import ClassifierModule
 from zeus.modules.memory import MemoryModule
 from zeus.modules.router import RouterModule
@@ -355,6 +356,19 @@ def main():
         _profile = UserProfile()
         _facts = FactStore()
         _skills = get_skill_manager()
+        _sync = get_sync()
+        # Auto-setup sync if token is available
+        if _config.get("sync.enabled", False):
+            try:
+                token = os.environ.get(_config.get("sync.token_env", "GITHUB_TOKEN"), "")
+                if token:
+                    _sync.setup(
+                        token=token,
+                        repo=_config.get("sync.repo", ""),
+                        branch=_config.get("sync.branch", "agent-state"),
+                    )
+            except Exception as e:
+                logger.debug("Sync auto-setup: %s", e)
 
         manager = ModuleManager(bus=bus)
         manager.register(ClassifierModule(bus=bus))
@@ -604,6 +618,9 @@ def main():
                         _facts.add(content, entity="user", category="user_pref", trust=0.7, source="manual")
                         _profile.update_from_text(content, source="manual")
                         print(f"✅ Remembered: {content[:100]}")
+                        # Auto-sync
+                        if _config.get("sync.enabled", False) and _sync._configured:
+                            _sync.auto_sync(message=f"remember: {content[:40]}")
                     else:
                         print("Usage: /remember <fact to remember>")
                     continue
@@ -666,6 +683,9 @@ def main():
                     path = _skills.create(name, desc, steps=["See body for details"])
                     print(f"✅ Skill created: {path}")
                     print("   Edit the file to add steps, commands, and pitfalls.")
+                    # Auto-sync
+                    if _config.get("sync.enabled", False) and _sync._configured:
+                        _sync.auto_sync(message=f"new skill: {name}")
                     continue
                 if text.startswith("/do "):
                     name = text[4:].strip()
@@ -678,6 +698,78 @@ def main():
                         print(f"❌ Skill not found: {name}")
                     continue
 
+
+                # ── Sync commands ─────────────────────────
+                if text == "/sync status":
+                    status = _sync.status()
+                    if status.get("error"):
+                        print(f"❌ {status['error']}")
+                    else:
+                        branch = status.get("branch", "?")
+                        clean = "✅" if status.get("clean") else "📝"
+                        ahead = status.get("ahead", 0)
+                        behind = status.get("behind", 0)
+                        modified = status.get("modified", [])
+                        print(f"\n{clean} Sync status (branch: {branch})")
+                        if ahead or behind:
+                            print(f"   📤 {ahead} ahead, 📥 {behind} behind")
+                        if modified:
+                            print(f"   📄 {len(modified)} file(s) modified:")
+                            for f in modified[:5]:
+                                print(f"      • {f}")
+                            if len(modified) > 5:
+                                print(f"      ... and {len(modified) - 5} more")
+                        print(f"   🌐 {_sync.url}")
+                    continue
+                if text == "/sync now":
+                    print("\n🔄 Syncing to GitHub...")
+                    if not _sync._configured:
+                        print("   Setting up sync...")
+                        token_env = _config.get("sync.token_env", "GITHUB_TOKEN")
+                        token = os.environ.get(token_env, "")
+                        if not token:
+                            print(f"❌ No token found in ${token_env}")
+                            print("   Set it in your environment or zeus.yaml")
+                            continue
+                        _sync.setup(
+                            token=token,
+                            repo=_config.get("sync.repo", ""),
+                            branch=_config.get("sync.branch", "agent-state"),
+                        )
+                    result = _sync.auto_sync(message="interactive save")
+                    print(f"{'✅ Synced!' if result else '⚠ Nothing to sync or push failed'}")
+                    continue
+                if text == "/sync on":
+                    _config._data.setdefault("sync", {})["enabled"] = True
+                    print("✅ Auto-sync enabled")
+                    continue
+                if text == "/sync off":
+                    _config._data.setdefault("sync", {})["enabled"] = False
+                    print("⏸ Auto-sync disabled")
+                    continue
+                if text.startswith("/sync log"):
+                    count = 10
+                    if text.strip() != "/sync log":
+                        try:
+                            count = int(text.split()[-1])
+                        except ValueError:
+                            pass
+                    commits = _sync.log(max_count=count)
+                    if commits:
+                        print(f"\n📜 Recent commits ({len(commits)}):\n")
+                        for c in commits:
+                            print(f"  {c['hash']} {c['message']} ({c.get('age', '')})")
+                    else:
+                        print("📜 No commits found.")
+                    continue
+                if text == "/sync" or text.startswith("/sync "):
+                    print("Usage: /sync status | /sync now | /sync on | /sync off | /sync log [n]")
+                    print("  /sync status   — show current git status")
+                    print("  /sync now      — commit + push to GitHub")
+                    print("  /sync on       — enable auto-sync")
+                    print("  /sync off      — disable auto-sync")
+                    print("  /sync log [n]  — show recent commits")
+                    continue
 
                 # Save to conversation history
                 _history.add("user", text)
