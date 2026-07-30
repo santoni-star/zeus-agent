@@ -36,6 +36,7 @@ from zeus.modules.router import RouterModule
 from zeus.modules.pipeline import PipelineModule
 from zeus.modules.reflection import ReflectionModule
 from zeus.modules.gateway import GatewayModule
+from zeus.config import ZeusConfig, show_config
 
 _llm_call = None
 _tool_registry = None
@@ -272,6 +273,8 @@ def main():
     parser.add_argument("--base-url", default=None, help="Base URL override")
     parser.add_argument("--providers", action="store_true", help="List available LLM providers and exit")
     parser.add_argument("--doctor", action="store_true", help="Check Zeus configuration")
+    parser.add_argument("--config", action="store_true", help="Show current configuration")
+    parser.add_argument("--config-path", default=None, help="Path to zeus.yaml config")
     parser.add_argument("--gateway", action="store_true", help="Enable Telegram gateway module")
     parser.add_argument("--gateway-token", default=None, help="Telegram bot token")
     parser.add_argument("--gateway-chat", default=None, help="Telegram chat ID")
@@ -285,6 +288,14 @@ def main():
     if args.doctor:
         show_doctor()
         return
+
+    # Load configuration
+    _config = ZeusConfig.load(args.config_path)
+    if args.config:
+        show_config()
+        return
+    if args.config_path:
+        print(f"⚡ Config loaded from: {args.config_path}")
 
     # Initialize core
     _tool_registry = setup_tools()
@@ -338,16 +349,25 @@ def main():
         manager.register(RouterModule(bus=bus, tool_registry=_tool_registry, llm_call=_llm_call))
         manager.register(PipelineModule(bus=bus, tool_registry=_tool_registry, llm_call=_llm_call))
         manager.register(ReflectionModule(bus=bus, tool_registry=_tool_registry, llm_call=_llm_call))
+        # Register enabled modules from config
+        if _config.get("memory.enabled", True):
+            from zeus.modules.memory import MemoryModule
+            manager.register(MemoryModule(bus=bus))
+        if _config.get("scheduler.enabled", True):
+            # Scheduler already initialized above
+            pass
 
         # Optional GatewayModule for Telegram
         _gateway_mod = None
-        if args.gateway:
-            _gateway_mod = GatewayModule(
-                bus=bus,
-                token=args.gateway_token,
-                chat_id=args.gateway_chat,
-            )
-            manager.register(_gateway_mod)
+        enable_gateway = args.gateway or _config.get("gateway.enabled", False)
+        if enable_gateway:
+            token = args.gateway_token or os.environ.get("TELEGRAM_BOT_TOKEN", "")
+            chat_id = args.gateway_chat or os.environ.get("TELEGRAM_CHAT_ID", "")
+            if token:
+                _gateway_mod = GatewayModule(bus=bus, token=token, chat_id=chat_id)
+                manager.register(_gateway_mod)
+            else:
+                print("⚠ Gateway enabled but TELEGRAM_BOT_TOKEN not set.")
 
         loop.run_until_complete(manager.start_all())
 

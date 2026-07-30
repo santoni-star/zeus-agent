@@ -7,22 +7,23 @@
 
 ## P4. Production (поточна фаза)
 
-### P4.1 ✦ GatewayModule — Telegram gateway як EventBus модуль
-- [ ] Створити GatewayModule у `zeus/modules/gateway.py`
-  - Підписується на `user.output` → відправляє в Telegram
-  - Отримує повідомлення з Telegram → публікує `user.input`
+- [x] GatewayModule — Telegram gateway як модуль EventBus
+  - Підписується на user.output → відправляє в Telegram
+  - Отримує повідомлення з Telegram → публікує user.input
   - Працює паралельно з CLI та іншими модулями
-- [ ] Інтегрувати TelegramBot API (python-telegram-bot або власний HTTP клієнт)
-- [ ] Підтримка команд: /start, /help, /memory, /tools
-- [ ] Підтримка кількох чатів (group, private)
-- [ ] Message queue для гарантованої доставки
+  - Інтегровано TelegramBot API через zeus/gateway.py
+  - Підтримка команд: /gateway, /gw
+  - Batched delivery (1s debounce)
+  - CLI: --gateway, --gateway-token, --gateway-chat флаги
 
-### P4.2 ✦ Config system
-- [ ] YAML config для модулів (zeus.yaml)
-- [ ] Per-module enable/disable
-- [ ] Auto-discovery модулів з директорії `zeus/modules/`
-- [ ] Zeug config merge: cli args > zeus.yaml > Hermes auto-config
-- [ ] `python -m zeus --config list` — показати поточну конфігурацію
+### P4.2 ✦ Config system (IN PROGRESS)
+- [x] YAML config для Zeus (zeus.yaml → ~/.zeus/config.yaml)
+- [x] Config reader/merger: defaults → file → env → CLI
+- [x] Per-module enable/disable
+- [x] ZeusConfig.get() через dot-notation
+- [x] `python -m zeus --config` — показати поточну конфігурацію
+- [ ] Auto-discovery модулів з директорії zeus/modules/
+- [ ] ModuleManager.load_all() — завантажити всі активні модулі з config
 
 ### P4.3 ✦ SchedulerModule — cron scheduling як модуль EventBus
 - [ ] Конвертувати `proactive.py` (background thread) в SchedulerModule
