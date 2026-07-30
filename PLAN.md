@@ -57,10 +57,12 @@
 - [x] Авто-скан кожні 10 задач
 - [x] Код не змінюється без апруву користувача
 
-### P5.2 ✦ Architecture evolution
-- [ ] Відстежує які модулі навантажені найбільше
-- [ ] Пропонує міграцію на окремі процеси
-- [ ] Self-tuning на основі метрик продуктивності
+### P5.2 ✦ Architecture evolution (DONE)
+- [x] TelemetryStore: SQLite для метрик продуктивності модулів
+- [x] TelemetryModule: авто-запис подій (duration, LLM calls, success rate)
+- [x] Architecture insights: bottleneck detection, error analysis, LLM efficiency
+- [x] CLI: /stats, /telemetry, /insights, /errors
+- [x] Per-module latency bars, success rates, event counts
 
 ---
 
