@@ -399,3 +399,100 @@ class ModuleManager:
     def bus_status(self) -> dict:
         """Get event bus subscriber info."""
         return self.bus.subscribers
+
+    # ── Auto-discovery ───────────────────────────────────
+
+    @staticmethod
+    def discover_modules(path: str | None = None) -> list[str]:
+        """Scan zeus/modules/ directory for available modules.
+
+        Returns list of module names (without .py extension).
+        Skips __init__.py and non-module files.
+        """
+        import os
+        from pathlib import Path
+
+        module_dir = Path(path or Path(__file__).parent / "modules")
+        if not module_dir.exists():
+            return []
+
+        names = []
+        for f in sorted(module_dir.iterdir()):
+            if f.name == "__init__.py" or f.name.startswith("_"):
+                continue
+            if f.suffix == ".py":
+                names.append(f.stem)
+        return names
+
+    def load_from_config(self, config: Any, tool_registry=None, llm_call=None, store=None):
+        """Load enabled modules from config.
+
+        Scans zeus/modules/, checks each against config's
+        enabled/disabled lists, and registers active ones.
+
+        Args:
+            config: ZeusConfig instance
+            tool_registry: Optional ToolRegistry for router/pipeline
+            llm_call: Optional LLM callable
+            store: Optional SessionStore for memory
+        """
+        from zeus.module import Module  # avoid circular
+
+        enabled = config.list_enabled_modules()
+        disabled = config.get("modules.disabled", [])
+
+        for name in self.discover_modules():
+            if name in disabled:
+                logger.info("Module %s: disabled in config", name)
+                continue
+            if name not in enabled:
+                # Not explicitly enabled, but also not disabled — skip
+                continue
+
+            # Import and instantiate
+            module = self._instantiate(name, tool_registry=tool_registry, llm_call=llm_call, store=store)
+            if module:
+                self.register(module)
+
+    def _instantiate(self, name: str, **kwargs) -> Any | None:
+        """Try to import and instantiate a module by name.
+
+        Args:
+            name: Module name (e.g. 'classifier', 'gateway')
+            **kwargs: Passed to constructor
+
+        Returns:
+            Module instance or None if import fails.
+        """
+        try:
+            import importlib
+            mod = importlib.import_module(f"zeus.modules.{name}")
+            # Find the Module subclass in the module
+            for attr_name in dir(mod):
+                attr = getattr(mod, attr_name)
+                if isinstance(attr, type) and issubclass(attr, Module) and attr_name != "Module":
+                    # Filter kwargs to match constructor
+                    import inspect
+                    sig = inspect.signature(attr.__init__)
+                    valid_kwargs = {}
+                    for param_name, param in sig.parameters.items():
+                        if param_name == "self":
+                            continue
+                        if param_name in kwargs:
+                            valid_kwargs[param_name] = kwargs[param_name]
+                        elif param.default is not param.empty:
+                            # Has default, ok to skip
+                            pass
+                        else:
+                            # Required param without value — skip this module
+                            logger.warning("Module %s requires param '%s'", name, param_name)
+                            return None
+                    return attr(**valid_kwargs)
+            logger.warning("Module %s: no Module subclass found", name)
+            return None
+        except ImportError as e:
+            logger.warning("Module %s: import error: %s", name, e)
+            return None
+        except Exception as e:
+            logger.warning("Module %s: init error: %s", name, e)
+            return None
