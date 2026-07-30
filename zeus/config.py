@@ -50,6 +50,7 @@ DEFAULT_CONFIG = {
             "router",
             "pipeline",
             "reflection",
+            "self_review",
             "sub_agent",
             "mcp",
         ],

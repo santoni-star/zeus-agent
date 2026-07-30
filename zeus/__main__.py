@@ -36,6 +36,7 @@ from zeus.modules.router import RouterModule
 from zeus.modules.pipeline import PipelineModule
 from zeus.modules.reflection import ReflectionModule
 from zeus.modules.gateway import GatewayModule
+from zeus.modules.self_review import SelfReviewModule
 from zeus.config import ZeusConfig, show_config
 
 _llm_call = None
@@ -369,6 +370,11 @@ def main():
             else:
                 print("⚠ Gateway enabled but TELEGRAM_BOT_TOKEN not set.")
 
+        # Optional SelfReviewModule
+        _self_review = SelfReviewModule(bus=bus, llm_call=_llm_call)
+        if _config.module_enabled("self_review"):
+            manager.register(_self_review)
+
         loop.run_until_complete(manager.start_all())
 
         print("\u2554\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2557")
@@ -417,6 +423,79 @@ def main():
                             print("⚠ Gateway: no token configured. Set TELEGRAM_BOT_TOKEN env var.")
                     else:
                         print("⚠ Gateway module not loaded. Restart with --gateway flag.")
+                    continue
+
+                # ── Review commands ────────────────────────
+                if text.startswith("/review scan"):
+                    parts = text.split(maxsplit=2)
+                    if len(parts) >= 3:
+                        # Scan specific file
+                        result = _self_review.scan_file(parts[2])
+                        if result:
+                            for p in result:
+                                print(p)
+                        else:
+                            print("ℹ No issues found in that file.")
+                    else:
+                        # Scan next unscanned
+                        print("⏳ Scanning next file... (use --interactive with LLM)")
+                    continue
+                if text == "/review list" or text == "/reviews":
+                    proposals = _self_review.list_proposals()
+                    if proposals:
+                        print(f"\n📋 Pending reviews ({len(proposals)}):\n")
+                        for p in proposals:
+                            print(p)
+                    else:
+                        print("✅ No pending reviews.")
+                    continue
+                if text.startswith("/review show"):
+                    parts = text.split(maxsplit=2)
+                    if len(parts) >= 3:
+                        p = _self_review.get_proposal(parts[2])
+                        if p:
+                            d = p.to_dict()
+                            print(f"\n{'='*60}")
+                            print(f"📝 {d['title']}")
+                            print(f"{'='*60}")
+                            print(f"  File: {d['target_file']}")
+                            print(f"  Lines: {d['line_range']}")
+                            print(f"  Type: {d['issue_type']} | Severity: {d['severity']}")
+                            print(f"  Status: {d['status']}")
+                            print(f"\n  Description: {d['description']}")
+                            if d['old_code']:
+                                print(f"\n  ┌─ Old code ──────────────────")
+                                print(f"  │ {d['old_code'][:600].replace(chr(10), chr(10)+'  │ ')}")
+                                print(f"  └────────────────────────────")
+                            if d['new_code']:
+                                print(f"\n  ┌─ Suggested ─────────────────")
+                                print(f"  │ {d['new_code'][:600].replace(chr(10), chr(10)+'  │ ')}")
+                                print(f"  └────────────────────────────")
+                            print(f"\n  /review approve {d['id']}")
+                            print(f"  /review reject {d['id']}")
+                            print()
+                        else:
+                            print(f"❌ Review `{parts[2]}` not found.")
+                    else:
+                        print("Usage: /review show <id>")
+                    continue
+                if text.startswith("/review approve"):
+                    parts = text.split(maxsplit=2)
+                    if len(parts) >= 3:
+                        if _self_review.approve_proposal(parts[2]):
+                            print(f"✅ Review {parts[2]} approved and applied!")
+                        else:
+                            print(f"❌ Could not apply {parts[2]}.")
+                    else:
+                        print("Usage: /review approve <id>")
+                    continue
+                if text.startswith("/review reject"):
+                    parts = text.split(maxsplit=2)
+                    if len(parts) >= 3:
+                        _self_review.reject_proposal(parts[2])
+                        print(f"❌ Review {parts[2]} rejected.")
+                    else:
+                        print("Usage: /review reject <id>")
                     continue
 
                 # Process via modular EventBus

@@ -11,6 +11,7 @@ Available modules:
   - reflection: Task pattern analysis and auto-tool creation
   - gateway: Telegram bridge (optional)
   - scheduler: Cron scheduling (optional)
+  - self_review: Self-code review (optional)
 """
 
 from zeus.module import EventBus, Module, ModuleManager, Event
@@ -23,3 +24,4 @@ from zeus.modules.sub_agent import SubAgentManager
 from zeus.modules.mcp import MCPModule
 from zeus.modules.gateway import GatewayModule
 from zeus.modules.scheduler import SchedulerModule
+from zeus.modules.self_review import SelfReviewModule
