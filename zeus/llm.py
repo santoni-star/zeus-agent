@@ -1,11 +1,11 @@
-"""LLM provider integration — adapts Hermes Agent's provider system for Zeus.
+"""LLM client factory — creates callable LLM functions from provider profiles.
 
-Instead of duplicating 20+ provider implementations, Zeus imports Hermes's
-provider discovery and ProviderProfile system directly.
+Uses Zeus's native provider system (zeus/providers/) to discover endpoints
+and auth config, with fallback to direct HTTP calls.
 
 Usage:
-    from zeus.providers import get_llm_call
-    llm = get_llm_call("openai", model="gpt-4")
+    from zeus.llm import make_llm_call
+    llm = make_llm_call("openai", model="gpt-4")
     response = llm(messages=[...], tools=[...])
 """
 
@@ -16,12 +16,7 @@ import sys
 from pathlib import Path
 from typing import Any, Callable
 
-# Add Hermes to path so we can import its providers
-_HERMES_PATH = Path(os.environ.get("HERMES_HOME", Path.home() / ".hermes")) / "hermes-agent"
-if str(_HERMES_PATH) not in sys.path:
-    sys.path.insert(0, str(_HERMES_PATH))
-
-# Try to read config from Hermes
+# Try to read config from Hermes (for auto-config)
 _HERMES_CONFIG = None
 _HERMES_ENV = None
 try:
@@ -47,8 +42,8 @@ except Exception:
     _HERMES_ENV = {}
 
 # Default model config — read from Hermes if available
-_DEFAULT_PROVIDER = "opencode-zen" if _HERMES_CONFIG else "openrouter"
-_DEFAULT_MODEL = "deepseek-v4-flash-free" if _HERMES_CONFIG else "deepseek/deepseek-v4-flash-free"
+_DEFAULT_PROVIDER = "openrouter"
+_DEFAULT_MODEL = "gpt-4o-mini"
 _DEFAULT_API_KEY = ""
 
 if _HERMES_CONFIG and "model" in _HERMES_CONFIG:
@@ -84,36 +79,21 @@ _llm_call_cache: dict[str, Callable] = {}
 
 
 def list_providers() -> list[dict]:
-    """List all available providers from Hermes."""
+    """List all available providers from Zeus's native provider system."""
     try:
-        from providers import list_providers as hermes_list
-        profiles = hermes_list()
+        from zeus.providers import list_providers as zeus_list
+        profiles = zeus_list()
         result = []
         for p in profiles:
-            if hasattr(p, 'get'):
-                result.append(p)
-            else:
-                result.append({
-                    "name": getattr(p, 'name', '?'),
-                    "display_name": getattr(p, 'display_name', ''),
-                    "description": getattr(p, 'description', ''),
-                    "api_mode": getattr(p, 'api_mode', 'chat_completions'),
-                })
+            result.append({
+                "name": getattr(p, 'name', '?'),
+                "display_name": getattr(p, 'display_name', ''),
+                "description": getattr(p, 'description', ''),
+                "api_mode": getattr(p, 'api_mode', 'chat_completions'),
+            })
         return result
     except ImportError:
         return _fallback_providers()
-
-
-def list_models(provider_name: str = None) -> list[str]:
-    """List available models for a provider."""
-    try:
-        from providers import get_provider_profile
-        profile = get_provider_profile(provider_name or _DEFAULT_PROVIDER)
-        if profile and hasattr(profile, "fallback_models"):
-            return list(profile.fallback_models)
-    except ImportError:
-        pass
-    return []
 
 
 def make_llm_call(
@@ -124,13 +104,13 @@ def make_llm_call(
 ) -> Callable:
     """Create an LLM call function for the given provider/model.
 
-    Uses Hermes's provider system to discover endpoints and auth.
-    Falls back to direct OpenAI-compatible HTTP call if Hermes is unavailable.
+    Uses Zeus's native provider system to discover endpoints and auth.
+    Falls back to direct OpenAI-compatible HTTP call.
 
     Args:
         provider: Provider name (openai, anthropic, openrouter, etc.)
         model: Model name
-        api_key: API key (defaults to ZEUS_LLM_API_KEY env var)
+        api_key: API key
         base_url: Override base URL
 
     Returns:
@@ -144,33 +124,32 @@ def make_llm_call(
     if cache_key in _llm_call_cache:
         return _llm_call_cache[cache_key]
 
-    # Try Hermes provider system first
+    # Try to get provider profile from Zeus's native system
+    profile = None
     try:
-        from providers import get_provider_profile
+        from zeus.providers import get_provider_profile
         profile = get_provider_profile(provider)
-        if profile:
-            llm = _create_from_profile(profile, model, api_key, base_url)
-            _llm_call_cache[cache_key] = llm
-            return llm
-    except (ImportError, Exception) as e:
-        print(f"⚠ Hermes provider system: {e}")
+    except ImportError:
+        pass
 
-    # Fallback: direct HTTP call (OpenAI-compatible API)
-    llm = _create_direct_call(provider, model, api_key, base_url)
+    if profile:
+        llm = _create_from_profile(profile, model, api_key, base_url)
+    else:
+        llm = _create_direct_call(provider, model, api_key, base_url)
+
     _llm_call_cache[cache_key] = llm
     return llm
 
 
 def _create_from_profile(profile, model: str, api_key: str, base_url: str | None) -> Callable:
-    """Create LLM call from a Hermes ProviderProfile."""
+    """Create LLM call from a ProviderProfile."""
     url = base_url or profile.base_url
     headers = {}
 
     if profile.auth_type == "api_key":
-        # Find the right env var from the profile
         env_key = None
         for env_var in profile.env_vars:
-            val = os.environ.get(env_var) or api_key
+            val = os.environ.get(env_var) or (api_key if api_key else None)
             if val:
                 headers["Authorization"] = f"Bearer {val}"
                 env_key = env_var
@@ -210,9 +189,7 @@ def _create_direct_call(provider: str, model: str, api_key: str, base_url: str |
     urls = {
         "openai": "https://api.openai.com/v1",
         "openrouter": "https://openrouter.ai/api/v1",
-        "anthropic": None,  # different API format
         "deepseek": "https://api.deepseek.com/v1",
-        "google": None,  # different API format
         "github": "https://models.inference.ai.azure.com",
     }
 
@@ -255,7 +232,6 @@ def _call_anthropic(messages: list, tools: list | None, api_key: str, model: str
     """Call Anthropic API (different format than OpenAI)."""
     import requests
 
-    # Convert OpenAI messages to Anthropic format
     system = ""
     anthropic_messages = []
     for m in messages:
@@ -289,19 +265,19 @@ def _call_anthropic(messages: list, tools: list | None, api_key: str, model: str
 
 
 def _fallback_providers() -> list[dict]:
-    """Fallback list when Hermes is unavailable."""
+    """Fallback list when no provider system is available."""
     return [
-        {"name": "openai", "display": "OpenAI", "models": ["gpt-4o", "gpt-4o-mini"]},
-        {"name": "openrouter", "display": "OpenRouter", "models": []},
-        {"name": "anthropic", "display": "Anthropic", "models": ["claude-sonnet-4", "claude-3-5-sonnet"]},
-        {"name": "deepseek", "display": "DeepSeek", "models": ["deepseek-v4-flash-free", "deepseek-chat"]},
+        {"name": "openai", "display_name": "OpenAI"},
+        {"name": "openrouter", "display_name": "OpenRouter"},
+        {"name": "anthropic", "display_name": "Anthropic"},
+        {"name": "deepseek", "display_name": "DeepSeek"},
     ]
 
 
 def configure_from_env() -> Callable:
-    """Configure LLM from environment variables and return a call function."""
+    """Configure LLM from environment variables and Hermes config."""
     return make_llm_call(
-        provider=os.environ.get("ZEUS_LLM_PROVIDER"),
-        model=os.environ.get("ZEUS_LLM_MODEL"),
-        api_key=os.environ.get("ZEUS_LLM_API_KEY"),
+        provider=os.environ.get("ZEUS_LLM_PROVIDER") or _DEFAULT_PROVIDER,
+        model=os.environ.get("ZEUS_LLM_MODEL") or _DEFAULT_MODEL,
+        api_key=os.environ.get("ZEUS_LLM_API_KEY") or _DEFAULT_API_KEY,
     )

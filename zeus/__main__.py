@@ -17,13 +17,12 @@ from zeus.models.types import ToolRegistry
 from zeus.tools.terminal import execute as terminal_execute, SCHEMA as terminal_schema
 from zeus.tools.file import execute as file_execute, SCHEMA as file_schema
 from zeus.tools.web import execute as web_execute, SCHEMA as web_schema
-from zeus.providers import (
+from zeus.llm import (
     make_llm_call,
     configure_from_env,
     list_providers,
-    list_models,
 )
-import zeus.providers as _providers  # for constants
+import zeus.llm as _llm_mod  # for constants
 
 _llm_call = None
 _tool_registry = None
@@ -133,14 +132,14 @@ Examples:
             api_key=args.api_key,
             base_url=args.base_url,
         )
-    elif _providers._DEFAULT_API_KEY:
+    elif _llm_mod._DEFAULT_API_KEY:
         _llm_call = make_llm_call(
-            provider=_providers._DEFAULT_PROVIDER,
-            model=_providers._DEFAULT_MODEL,
-            api_key=_providers._DEFAULT_API_KEY,
+            provider=_llm_mod._DEFAULT_PROVIDER,
+            model=_llm_mod._DEFAULT_MODEL,
+            api_key=_llm_mod._DEFAULT_API_KEY,
         )
         if args.query or args.interactive:
-            print(f"⚡ Auto-configured: {_providers._DEFAULT_PROVIDER}/{_providers._DEFAULT_MODEL}")
+            print(f"⚡ Auto-configured: {_llm_mod._DEFAULT_PROVIDER}/{_llm_mod._DEFAULT_MODEL}")
     elif os.environ.get("ZEUS_LLM_API_KEY"):
         _llm_call = configure_from_env()
 
@@ -195,10 +194,10 @@ def show_doctor():
     print(f"\n🐍 Python: {sys.version}")
 
     # LLM
-    api_key_set = bool(_providers._DEFAULT_API_KEY)
+    api_key_set = bool(_llm_mod._DEFAULT_API_KEY)
     print(f"🔑 LLM API Key: {'✅ set' if api_key_set else '❌ not set'}")
-    print(f"   Provider: {_providers._DEFAULT_PROVIDER}")
-    print(f"   Model: {_providers._DEFAULT_MODEL}")
+    print(f"   Provider: {_llm_mod._DEFAULT_PROVIDER}")
+    print(f"   Model: {_llm_mod._DEFAULT_MODEL}")
     if _llm_call:
         print(f"   Status: ✅ configured and ready")
     elif api_key_set:
