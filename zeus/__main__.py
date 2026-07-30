@@ -9,9 +9,12 @@ Usage:
 from __future__ import annotations
 import argparse
 import asyncio
+import logging
 import os
 import sys
 import re
+
+logger = logging.getLogger(__name__)
 
 from zeus.models.types import ToolRegistry
 from zeus.tools.terminal import execute as terminal_execute, SCHEMA as terminal_schema
@@ -35,7 +38,7 @@ from zeus.memory.profile import UserProfile, FactStore
 from zeus.skills import SkillManager, get_skill_manager
 from zeus.sync import GitSync, get_sync, auto_sync
 from zeus.actions import ActionsManager, get_actions, auto_generate_workflows
-from zeus.mcp_client import MCPClientManager, get_mcp_manager, format_mcp_status, MCP_AVAILABLE
+from zeus.mcp_client import MCPClientManager, get_mcp_manager, MCP_AVAILABLE
 from zeus.modules.classifier import ClassifierModule
 from zeus.modules.memory import MemoryModule
 from zeus.modules.router import RouterModule
