@@ -113,16 +113,38 @@ class MCPServerConnection:
         await self._session.initialize()
 
     async def _connect_http(self):
-        """Connect via HTTP transport."""
-        from mcp.client.streamable_http import StreamableHTTPClientSession
+        """Connect via HTTP transport — persistent pattern."""
+        from mcp.client.streamable_http import streamable_http_client
         import httpx
 
         url = self.config["url"]
-        headers = self.config.get("headers", {})
 
-        client = httpx.AsyncClient(headers=headers)
-        self._http_client = client
-        self._session = StreamableHTTPClientSession(client, url)
+        # Resolve ${VAR} references in config
+        import re
+        def _resolve_env(s):
+            if isinstance(s, str):
+                return re.sub(r'\$\{(\w+)\}', lambda m: os.environ.get(m.group(1), m.group(0)), s)
+            return s
+
+        headers = {}
+        for k, v in self.config.get("headers", {}).items():
+            headers[k] = _resolve_env(v)
+
+        # Create HTTP client with headers
+        http_client = httpx.AsyncClient(
+            headers=headers,
+            timeout=self.config.get("timeout", 120),
+        )
+
+        # Open streamable_http_client context manager (persistent)
+        self._http_client = http_client
+        self._http_cm = streamable_http_client(url, http_client=http_client)
+        self._read, self._write, _ = await self._http_cm.__aenter__()
+
+        from mcp import ClientSession
+        self._session_cm = ClientSession(self._read, self._write)
+        self._session = await self._session_cm.__aenter__()
+
         await self._session.initialize()
 
     async def call_tool(self, tool_name: str, arguments: dict,
@@ -165,19 +187,26 @@ class MCPServerConnection:
             except Exception:
                 pass
             self._session_cm = None
-        # Close stdio
+        # Close stdio transport
         if self._stdio_cm:
             try:
                 await self._stdio_cm.__aexit__(None, None, None)
             except Exception:
                 pass
             self._stdio_cm = None
-        # Close HTTP client
-        if hasattr(self, '_http_client'):
+        # Close HTTP transport
+        if self._http_cm:
+            try:
+                await self._http_cm.__aexit__(None, None, None)
+            except Exception:
+                pass
+            self._http_cm = None
+        if hasattr(self, '_http_client') and self._http_client:
             try:
                 await self._http_client.aclose()
             except Exception:
                 pass
+            self._http_client = None
         self._session = None
         logger.info("MCP '%s': disconnected", self.name)
 

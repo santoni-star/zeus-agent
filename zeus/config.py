@@ -96,11 +96,21 @@ DEFAULT_CONFIG = {
         },
     },
     "mcp_servers": {
+        # Time server (example)
         # "time": {
         #     "command": "uvx",
         #     "args": ["mcp-server-time"],
         #     "enabled": True,
         # },
+        # Context7 — knowledge graph / context store
+        "ctx7": {
+            "url": "https://mcp.context7.com/mcp",
+            "headers": {
+                "Authorization": "Bearer ${CONTEXT7_API_KEY}",
+            },
+            "enabled": True,
+            "timeout": 120,
+        },
     },
 }
 
