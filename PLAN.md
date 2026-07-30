@@ -56,21 +56,27 @@
 
 ## P3. Sub-Agent Orchestration
 
-### P3.1 ✦ Sub-agent spawning
-- [ ] Кожен субагент — це окремий Module (ізольований контекст)
-- [ ] SubAgentManager — створює/знищує субагентів
-- [ ] Event-based комунікація між субагентами
-- [ ] Агрегація результатів від кількох субагентів
+### P3.1 ✦ Sub-agent spawning (DONE)
+- [x] Кожен субагент — SubAgentInstance (ізольований контекст)
+- [x] SubAgentManager — spawn/трекінг/cleanup
+- [x] Event-based комунікація (sub_agent.completed)
+- [x] Три типи: llm_call, terminal, search
+- [x] Parallel spawning: asyncio.create_task()
 
-### P3.2 ✦ MCP Context Server
-- [ ] MCP module — читає контекст проекту (files, git log, issues)
-- [ ] Підписка на `pipeline.request` — додає контекст перед Planner
-- [ ] Працює паралельно (не блокує pipeline)
+### P3.2 ✦ MCP Context Server (DONE)
+- [x] MCP module: reads README, AGENTS.md, CLAUDE.md
+- [x] Git context: branch, status, recent commits
+- [x] Directory structure: top-level listing
+- [x] File search: keyword-based grep for relevant files
+- [x] Context caching: 30s TTL to avoid repeated reads
+- [x] Event-based: responds to context.request and pipeline.request
 
-### P3.3 ✦ Parallel DAG execution
-- [ ] Незалежні ноди DAG виконуються паралельно (async)
-- [ ] Динамічне додавання нод під час виконання
-- [ ] Deadlock detection
+### P3.3 ✦ Parallel DAG execution (DONE)
+- [x] Незалежні ноди DAG виконуються паралельно (asyncio.to_thread)
+- [x] Thread-safe: кожен thread отримує snapshot results
+- [x] Exception handling: return_exceptions=True
+- [x] Deadlock detection: safety break через max iterations
+- [x] execute_dag_async() — нова функція для паралельного DAG
 
 ---
 

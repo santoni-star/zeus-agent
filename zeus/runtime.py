@@ -5,6 +5,7 @@ It walks the graph, calls tools, handles retries, manages parallelism.
 """
 
 from __future__ import annotations
+import asyncio
 import time
 from collections import deque
 
@@ -93,6 +94,118 @@ def execute_dag(dag: TaskDAG, tool_registry, llm_call=None) -> list[NodeResult]:
         if n.id in results:
             final_results.append(results[n.id])
         elif n.id in cancelled or any(dep in failed for dep in n.depends_on):
+            final_results.append(NodeResult(
+                node_id=n.id, success=False,
+                error="Cancelled due to dependency failure"
+            ))
+        else:
+            final_results.append(NodeResult(
+                node_id=n.id, success=False,
+                error="Not executed before termination"
+            ))
+
+    return final_results
+
+
+def execute_dag_async(dag: TaskDAG, tool_registry, llm_call=None) -> list[NodeResult]:
+    """Async version of execute_dag — runs independent nodes in parallel.
+
+    Same semantics as execute_dag, but uses asyncio to execute
+    ready nodes concurrently, improving throughput on I/O-bound tasks.
+
+    Args:
+        dag: The Task DAG to execute.
+        tool_registry: Registry of available tools.
+        llm_call: Optional LLM call function for 'llm' type nodes.
+
+    Returns:
+        List of NodeResult for each node in the DAG.
+    """
+    results: dict[str, NodeResult] = {}
+    completed = set()
+    failed = set()
+    cancelled = set()
+
+    # Find root nodes
+    roots = [n for n in dag.nodes if not n.depends_on]
+    if not roots and dag.nodes:
+        roots = _find_ready_nodes(dag.nodes, completed, failed)
+
+    queue = deque(roots)
+    visited = set()
+
+    while queue:
+        node = queue.popleft()
+
+        # Check if any dependency failed
+        failed_deps = [dep for dep in node.depends_on if dep in failed]
+        if failed_deps:
+            results[node.id] = NodeResult(
+                node_id=node.id, success=False,
+                error=f"Cancelled: dependency {failed_deps[0]} failed",
+            )
+            cancelled.add(node.id)
+            _propagate_cancellation(node.id, dag.nodes, results, cancelled)
+            continue
+
+        # Check if dependencies met
+        if not all(dep in completed for dep in node.depends_on):
+            queue.append(node)
+            continue
+
+        # Don't add popped node to visited yet — it goes into the parallel batch
+        if node.id in results or node.id in visited:
+            continue
+
+        # Find ALL ready nodes and run them in parallel
+        ready = _find_ready_nodes(dag.nodes, completed, failed)
+        # Filter: only nodes not already processed
+        ready = [r for r in ready if r.id not in visited and r.id not in completed and r.id not in results]
+
+        if ready:
+            # Run all ready nodes concurrently
+            async def run_ready():
+                tasks = []
+                for r in ready:
+                    visited.add(r.id)
+                    tasks.append(asyncio.to_thread(_execute_node, r, tool_registry, dict(results), llm_call))
+                node_results = await asyncio.gather(*tasks, return_exceptions=True)
+
+                for r, nr in zip(ready, node_results):
+                    if isinstance(nr, NodeResult):
+                        results[r.id] = nr
+                        if nr.success:
+                            completed.add(r.id)
+                        else:
+                            failed.add(r.id)
+                            _propagate_cancellation(r.id, dag.nodes, results, cancelled)
+                    else:
+                        # Exception was raised
+                        results[r.id] = NodeResult(
+                            node_id=r.id, success=False,
+                            error=f"Thread exception: {nr}",
+                        )
+                        failed.add(r.id)
+                        _propagate_cancellation(r.id, dag.nodes, results, cancelled)
+
+                # Find next level
+                next_ready = _find_ready_nodes(dag.nodes, completed, failed)
+                for nr in next_ready:
+                    if nr.id not in visited and nr.id not in completed:
+                        queue.append(nr)
+
+            asyncio.run(run_ready())
+
+        # Safety check
+        if len(completed) + len(failed) + len(cancelled) >= len(dag.nodes):
+            break
+
+    # Return results in DAG order
+    final_results = []
+    for n in dag.nodes:
+        if n.id in results:
+            final_results.append(results[n.id])
+        elif n.id in cancelled:
             final_results.append(NodeResult(
                 node_id=n.id, success=False,
                 error="Cancelled due to dependency failure"

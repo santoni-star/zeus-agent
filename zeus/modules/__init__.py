@@ -17,3 +17,5 @@ from zeus.modules.memory import MemoryModule
 from zeus.modules.router import RouterModule
 from zeus.modules.pipeline import PipelineModule
 from zeus.modules.reflection import ReflectionModule
+from zeus.modules.sub_agent import SubAgentManager
+from zeus.modules.mcp import MCPModule
