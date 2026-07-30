@@ -20,11 +20,10 @@
 - [x] Якщо патерн повторюється (2+ рази) → авто-створення тулзи
 - [x] Після `task.failed` — аналіз помилки, збереження для самоаналізу
 
-### P1.3 ✦ Planner self-tuning
-- [ ] Трекінг успішності DAG: які типи задач → яка структура DAG
-- [ ] Simple tasks (1-2 tools) → 1-node DAG
-- [ ] Complex tasks (3+ tools) → multi-node DAG
-- [ ] Adjust depth based on model capability (small models → simpler DAGs)
+### P1.3 ✦ Planner self-tuning (DONE)
+- [x] Fast path: прості запити (currency, search, file, terminal) → 1-node DAG без LLM
+- [x] Трекінг стратегій: success rate per strategy (fast_path vs llm_planner)
+- [x] Self-tuning: якщо fast_path має >80% success → автоматичний вибір
 
 ### P1.4 ✦ Failure handling per sub-tree
 - [ ] Якщо node fail → retry (1-2 рази)

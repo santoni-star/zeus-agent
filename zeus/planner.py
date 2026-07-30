@@ -1,7 +1,15 @@
-"""Planner — converts a user request into a Task DAG via one LLM call."""
+"""Planner — converts a user request into a Task DAG via LLM or fast path.
+
+Self-tuning: tracks success rates per strategy and adapts.
+Fast path: simple queries skip LLM Planner → direct 1-node DAG.
+"""
 
 from __future__ import annotations
 import json
+import re
+import time
+from collections import defaultdict
+from typing import Any
 
 from zeus.models import TaskDAG, DAGNode
 
@@ -41,17 +49,147 @@ JSON з Task DAG. Формат:
 8. Якщо задача потребує пошуку → читання → дії — створи DAG."""
 
 
-def plan(text: str, tools: list[dict], llm_call) -> TaskDAG | None:
-    """Plan a task by calling the LLM once to generate a Task DAG.
+# ── Self-tuning data ───────────────────────────────────────
 
-    Args:
-        text: User request.
-        tools: List of tool schemas available.
-        llm_call: Function to call LLM. Signature: llm_call(messages, tools) -> str
+_STRATEGY_STATS: dict[str, dict] = defaultdict(lambda: {"attempts": 0, "successes": 0, "total_dur_ms": 0})
+
+# Fast-path patterns: directly mapped to tool + params
+_FAST_PATH_PATTERNS: list[tuple[re.Pattern, str, dict | None]] = [
+    # Currency conversion: "257 USD to PLN" → currency_converter
+    (re.compile(r'^(\d+\.?\d*)\s+([A-Za-z]{3})\s+(?:to|in|->|в)\s+([A-Za-z]{3})$'), "currency_converter", None),
+    # Simple search: "search X" or "find X"
+    (re.compile(r'^(?:search|find|look up)\s+(.+)$', re.IGNORECASE), "web_search", None),
+    # File read: "read /path" or "cat /path"
+    (re.compile(r'^(?:read|cat)\s+(.+)$', re.IGNORECASE), "file", {"action": "read"}),
+    # File list: "list files" or "ls /path"
+    (re.compile(r'^(?:list|ls)\s+(.+)$', re.IGNORECASE), "file", {"action": "list"}),
+    # Terminal command: "run command"
+    (re.compile(r'^run\s+(.+)$', re.IGNORECASE), "terminal", None),
+]
+
+
+def record_strategy(strategy: str, success: bool, duration_ms: float):
+    """Record planner strategy performance for self-tuning."""
+    stats = _STRATEGY_STATS[strategy]
+    stats["attempts"] += 1
+    if success:
+        stats["successes"] += 1
+    stats["total_dur_ms"] += duration_ms
+
+
+def get_strategy_stats() -> dict:
+    """Get self-tuning statistics."""
+    return dict(_STRATEGY_STATS)
+
+
+def get_best_strategy(task_text: str) -> str | None:
+    """Return the best strategy for a task based on historical data."""
+    # If we have data and fast_path has >80% success, prefer it for matching tasks
+    for strat, stats in _STRATEGY_STATS.items():
+        if strat == "fast_path" and stats["attempts"] >= 3:
+            success_rate = stats["successes"] / stats["attempts"]
+            if success_rate >= 0.8:
+                # Check if current task matches fast path
+                for pattern, *_ in _FAST_PATH_PATTERNS:
+                    if pattern.match(task_text.strip()):
+                        return "fast_path"
+    return None
+
+
+def _build_fast_path_dag(text: str, tools: list[dict]) -> TaskDAG | None:
+    """Try to build a 1-node DAG without calling the LLM.
+
+    Returns TaskDAG if the query matches a fast-path pattern, None otherwise.
+    """
+    text_stripped = text.strip()
+
+    for pattern, tool_name, fixed_params in _FAST_PATH_PATTERNS:
+        m = pattern.match(text_stripped)
+        if not m:
+            continue
+
+        # Check if the tool is available
+        tool_available = any(s.get("name") == tool_name for s in tools)
+        if not tool_available:
+            continue
+
+        # Build parameters
+        params = {}
+
+        # Extract the matched groups
+        groups = m.groups()
+
+        if tool_name == "currency_converter":
+            if len(groups) >= 3:
+                params["amount"] = float(groups[0])
+                params["from_currency"] = groups[1].upper()
+                params["to_currency"] = groups[2].upper()
+            else:
+                continue
+            goal = f"Convert {params['amount']} {params['from_currency']} to {params['to_currency']}"
+
+        elif tool_name == "web_search":
+            params["query"] = groups[0] if groups else text
+            goal = f"Search for: {params['query']}"
+
+        elif tool_name == "file":
+            if fixed_params:
+                params.update(fixed_params)
+            if groups:
+                params["path"] = groups[0]
+            goal = f"{fixed_params.get('action', 'read')} file: {params.get('path', '')}"
+
+        elif tool_name == "terminal":
+            params["command"] = groups[0] if groups else text
+            goal = f"Run: {params['command']}"
+
+        else:
+            goal = text
+
+        node_id = tool_name.replace("_", "_")
+        node = DAGNode(
+            id=node_id,
+            type="tool",
+            tool=tool_name,
+            params=params,
+            depends_on=[],
+            retry=1,
+            timeout=30,
+        )
+
+        dag = TaskDAG(goal=goal, nodes=[node])
+        errors = dag.validate()
+        if not errors:
+            return dag
+
+    return None
+
+
+# ── Main planner ────────────────────────────────────────────
+
+def plan(text: str, tools: list[dict], llm_call) -> TaskDAG | None:
+    """Plan a task.
+
+    Strategy:
+      1. Try fast path (no LLM) for simple queries
+      2. If fast path fails or query is complex → LLM Planner
 
     Returns:
         TaskDAG or None if planning failed.
     """
+    start = time.time()
+    strategy = "fast_path"
+
+    # Try fast path first
+    dag = _build_fast_path_dag(text, tools)
+    if dag:
+        duration = (time.time() - start) * 1000
+        record_strategy("fast_path", True, duration)
+        return dag
+
+    strategy = "llm_planner"
+
+    # Fall back to LLM Planner
     tools_json = json.dumps(tools, indent=2, ensure_ascii=False)
     user_prompt = f"""Запит користувача: {text}
 
@@ -68,27 +206,29 @@ def plan(text: str, tools: list[dict], llm_call) -> TaskDAG | None:
 
     # Parse JSON from response
     try:
-        # Try direct JSON parse first
         parsed = json.loads(response)
     except json.JSONDecodeError:
-        # Try to extract JSON block from markdown
-        import re
         match = re.search(r'```(?:json)?\s*\n?(.*?)\n?```', response, re.DOTALL)
         if match:
             try:
                 parsed = json.loads(match.group(1))
             except json.JSONDecodeError:
+                duration = (time.time() - start) * 1000
+                record_strategy(strategy, False, duration)
                 return None
         else:
-            # Last resort: find first { and last }
-            start = response.find('{')
-            end = response.rfind('}')
-            if start >= 0 and end > start:
+            start_idx = response.find('{')
+            end_idx = response.rfind('}')
+            if start_idx >= 0 and end_idx > start_idx:
                 try:
-                    parsed = json.loads(response[start:end+1])
+                    parsed = json.loads(response[start_idx:end_idx + 1])
                 except json.JSONDecodeError:
+                    duration = (time.time() - start) * 1000
+                    record_strategy(strategy, False, duration)
                     return None
             else:
+                duration = (time.time() - start) * 1000
+                record_strategy(strategy, False, duration)
                 return None
 
     try:
@@ -96,7 +236,11 @@ def plan(text: str, tools: list[dict], llm_call) -> TaskDAG | None:
         errors = dag.validate()
         if errors:
             print(f"⚠ DAG validation errors: {errors}")
+        duration = (time.time() - start) * 1000
+        record_strategy(strategy, True, duration)
         return dag
     except Exception as e:
         print(f"⚠ Failed to parse DAG: {e}")
+        duration = (time.time() - start) * 1000
+        record_strategy(strategy, False, duration)
         return None
