@@ -21,6 +21,8 @@ from zeus.llm import make_llm_call, configure_from_env, list_providers
 import zeus.llm as _llm_mod  # for constants
 
 from zeus.memory import SessionStore, extract_facts, save_task_result
+from zeus.proactive import Scheduler
+import re
 
 _llm_call = None
 _tool_registry = None
@@ -111,6 +113,60 @@ def _show_sessions(store):
         print(f"  #{s['id']} {s['title'] or '(no title)'} — {ts}")
 
 
+def _show_jobs(scheduler):
+    """Display scheduled jobs."""
+    jobs = scheduler.list_jobs()
+    if not jobs:
+        print("  No scheduled jobs.")
+        return
+    print(f"  Jobs ({len(jobs)}):")
+    for j in jobs:
+        status = "▶" if j["active"] else "⏸"
+        kind = j["kind"]
+        task = j["task"][:50]
+        runs = j["run_count"]
+        if j["active"]:
+            next_in = j.get("next_in", 0)
+            next_str = f"next in {next_in:.0f}s" if next_in > 0 else "now"
+        else:
+            next_str = "paused"
+        print(f"  {status} {j['id']}: {kind} — \"{task}\" ({runs} runs, {next_str})")
+
+
+def _handle_schedule_cmd(text: str, scheduler):
+    """Handle /schedule commands."""
+    cmd = text[len("/schedule "):].strip()
+
+    # /schedule every <N> <unit> run <task>
+    m = re.match(r"every\s+(\d+)\s*(s|sec|m|min|h|hr)?\s+run\s+(.+)", cmd, re.IGNORECASE)
+    if m:
+        num = int(m.group(1))
+        unit = (m.group(2) or "m").lower()
+        task = m.group(3).strip()
+        multipliers = {"s": 1, "sec": 1, "m": 60, "min": 60, "h": 3600, "hr": 3600}
+        interval = num * multipliers.get(unit, 60)
+        jid = scheduler.schedule_every(interval, task)
+        next_time = scheduler._jobs[jid]["next_run"]
+        import datetime
+        ts = datetime.datetime.fromtimestamp(next_time).strftime("%H:%M:%S")
+        print(f"  ✅ Scheduled every {num}{unit}: \"{task[:50]}\" (next: {ts})")
+        return
+
+    # /schedule cancel <id>
+    m = re.match(r"cancel\s+(.+)", cmd, re.IGNORECASE)
+    if m:
+        jid = m.group(1).strip()
+        if scheduler.cancel(jid):
+            print(f"  ✅ Cancelled job: {jid}")
+        else:
+            print(f"  ⚠ Job not found: {jid}")
+        return
+
+    print("  ⚠ Usage: /schedule every <N> <unit> run <task>")
+    print("    e.g.: /schedule every 30m run search latest python news")
+    print("    e.g.: /schedule cancel job_123")
+
+
 def main():
     global _llm_call, _tool_registry
 
@@ -158,6 +214,11 @@ Examples:
 
     # Initialize memory
     _store = SessionStore()
+
+    # Initialize scheduler
+    _scheduler = Scheduler()
+    _scheduler.set_task_callback(lambda text: process(text, _tool_registry, _store))
+    _scheduler.start()
 
     # Initialize LLM — auto-configure from Hermes if possible
     if args.provider or args.model or args.api_key:
@@ -209,6 +270,14 @@ Examples:
                 if text == "/sessions":
                     _show_sessions(_store)
                     continue
+                if text == "/jobs" or text == "/schedule list":
+                    _show_jobs(_scheduler)
+                    continue
+
+                # Schedule commands
+                if text.startswith("/schedule "):
+                    _handle_schedule_cmd(text, _scheduler)
+                    continue
 
                 result = process(text, _tool_registry, _store)
                 print()
@@ -221,6 +290,7 @@ Examples:
                 break
             except Exception as e:
                 print(f"⚠ Error: {e}")
+        _scheduler.stop()
     else:
         parser.print_help()
 

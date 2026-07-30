@@ -20,8 +20,9 @@
 - [x] Auto-configuration from Hermes config
 - [x] LLM-powered Planner creates real DAGs (Phase 0.1)
 - [x] Memory skeleton (SQLite+FTS5 for sessions, facts, extractor)
-- [ ] One real task: "find and install a Hermes skill"
-- [ ] Comparison benchmark vs Hermes Agent on 5 tasks
+- [x] One real task: searched, analyzed, saved results to file
+- [x] Comparison benchmark vs Hermes Agent on 5 tasks (Zeus 5/5)
+- [ ] L0 Proactive Engine (triggers, patterns, scheduled actions)
 
 **Deliverable:** `zeus run "find a skill for docker"` works.
 
