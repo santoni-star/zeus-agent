@@ -300,4 +300,5 @@ User: "create a tool that converts markdown to html"
 | web_fetch (web_fetch.py) | ~140 | 🌐 medium | no |
 | code_exec (code.py) | ~100 | ⚡ fast | no |
 | session_search (search_session.py) | ~50 | 📚 medium | no (FTS5) |
-| dynamic (dynamic.py) | ~400 | varies | NL→code |
+| api_call (api_call.py) | ~100 | 🌐 medium | no |
+| image (image.py) | ~150 | 🖼 medium | no |
