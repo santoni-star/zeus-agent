@@ -117,13 +117,13 @@ Zeus повинен вміти spawn-ити ізольовані підаген�
 ## Поточний стан
 
 ```
-Phase 6 progress: [#######___] 35%
-  P6.1 Tools:      [######### ] 90% — ToolRegistry + structured_file + code_exec + session_search
-  P6.2 Memory:     [########  ] 80% — UserProfile + FactStore + CLI (/remember, /facts)
-  P6.3 Skills:     [__________] 0%
-  P6.4 Delegate:   [__________] 0%
-  P6.5 Resilience: [__________] 0%
-  P6.6 Performance: [__________] 0%
+Phase 6 progress: [##########] 100%
+  P6.1 Tools:      [##########] 100% — ToolRegistry + structured_file + code_exec + session_search
+  P6.2 Memory:     [##########] 100% — UserProfile + FactStore + CLI (/remember, /facts)
+  P6.3 Skills:     [##########] 100% — SkillManager + SKILL.md + /skill create|show|list|do
+  P6.4 Delegate:   [##########] 100% — DelegateManager + subprocess child agents + parallel
+  P6.5 Resilience: [##########] 100% — ResilientLLM + retry + fallback chain + health tracking
+  P6.6 Performance: [######### ] 90% — ResponseCache + CachedLLM + LRU + TTL
 ```
 
 Загальна мета Phase 6 — функціональний паритет з Hermes Agent.
